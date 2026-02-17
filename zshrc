@@ -47,3 +47,6 @@ alias path='echo $PATH | tr ":" "\n"'
 
 # Source machine-local config if present
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
+
+# Claude
+export PATH="$HOME/.local/bin:$PATH"

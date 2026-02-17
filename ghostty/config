@@ -5,3 +5,4 @@ shell-integration-features = no-cursor
 background-opacity = 0.9
 
 keybind = super+f=start_search
+shell-integration-features = ssh-env

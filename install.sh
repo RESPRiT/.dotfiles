@@ -20,6 +20,12 @@ link "$DOTFILES/zshrc" "$HOME/.zshrc"
 
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"
+mkdir -p "$HOME/.vim/pack/plugins/start"
+if [ ! -d "$HOME/.vim/pack/plugins/start/vim-colors-solarized" ]; then
+  git clone https://github.com/altercation/vim-colors-solarized.git \
+    "$HOME/.vim/pack/plugins/start/vim-colors-solarized"
+  echo "Installed vim-colors-solarized"
+fi
 
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"

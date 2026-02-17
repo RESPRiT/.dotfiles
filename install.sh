@@ -27,6 +27,10 @@ if [ ! -d "$HOME/.vim/pack/plugins/start/vim-colors-solarized" ]; then
   echo "Installed vim-colors-solarized"
 fi
 
+# Claude Code
+mkdir -p "$HOME/.claude"
+link "$DOTFILES/claude/settings.local.json" "$HOME/.claude/settings.local.json"
+
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"

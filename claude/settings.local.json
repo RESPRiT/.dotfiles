@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git branch:*)",
+      "Bash(git stash list:*)",
+      "Bash(git remote:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git shortlog:*)",
+      "Bash(git reflog:*)",
+      "Bash(which:*)",
+      "Bash(brew list:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}

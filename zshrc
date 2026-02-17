@@ -50,3 +50,7 @@ alias path='echo $PATH | tr ":" "\n"'
 
 # Claude
 export PATH="$HOME/.local/bin:$PATH"
+
+. "$HOME/.atuin/bin/env"
+
+eval "$(atuin init zsh)"

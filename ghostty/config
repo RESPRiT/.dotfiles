@@ -1,8 +1,7 @@
 font-size = 14
 cursor-style = block
 theme = Solarized Dark Higher Contrast
-shell-integration-features = no-cursor
+shell-integration-features = no-cursor,ssh-env
 background-opacity = 0.9
 
 keybind = super+f=start_search
-shell-integration-features = ssh-env

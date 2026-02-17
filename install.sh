@@ -31,5 +31,19 @@ fi
 mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"
 
+# atuin
+curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh
+
+echo ""
+read -rp "Atuin username: " ATUIN_USERNAME
+read -rsp "Atuin password: " ATUIN_PASSWORD
+echo ""
+read -rsp "Atuin key: " ATUIN_KEY
+echo ""
+
+atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
+atuin sync
+
 echo ""
 echo "Done! Machine-specific config goes in ~/.zshrc.local"
+

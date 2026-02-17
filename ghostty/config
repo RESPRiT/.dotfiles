@@ -1,0 +1,7 @@
+font-size = 14
+cursor-style = block
+theme = Solarized Dark Higher Contrast
+shell-integration-features = no-cursor
+background-opacity = 0.9
+
+keybind = super+f=start_search

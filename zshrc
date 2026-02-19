@@ -1,5 +1,6 @@
 # z
 eval "$(zoxide init zsh)"
+export _ZO_DOCTOR=0
 
 # Prompt: user@machine in light blue, current dir only, with %
 PROMPT='%F{117}%n@%m%f %2~ %# '
@@ -50,7 +51,18 @@ alias path='echo $PATH | tr ":" "\n"'
 
 # Claude
 export PATH="$HOME/.local/bin:$PATH"
+export ENABLE_LSP_TOOL=1
 
+# atuin
 . "$HOME/.atuin/bin/env"
-
 eval "$(atuin init zsh)"
+
+# bun completions
+[ -s "/Users/resprit/.bun/_bun" ] && source "/Users/resprit/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# deno
+. "/Users/resprit/.deno/env"

@@ -15,8 +15,26 @@ link() {
   echo "Linked $dst -> $src"
 }
 
+link_shell() {
+  local src="$1" dst="$2" local="$3"
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  elif [ -e "$dst" ]; then
+    if [ -e "$local" ]; then
+      echo "Error: $local already exists. Remove it manually before installing." >&2
+      exit 1
+    fi
+    mv "$dst" "$local"
+    echo "Moved existing $dst -> $local"
+  fi
+  ln -s "$src" "$dst"
+  echo "Linked $dst -> $src"
+}
+
 # Shell
-link "$DOTFILES/zshrc" "$HOME/.zshrc"
+link "$DOTFILES/shellrc" "$HOME/.shellrc"
+link_shell "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
+link_shell "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
 
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"
@@ -49,5 +67,5 @@ atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
 atuin sync
 
 echo ""
-echo "Done! Machine-specific config goes in ~/.zshrc.local"
+echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"
 

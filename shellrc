@@ -1,0 +1,28 @@
+# Colorized ls
+export CLICOLOR=1
+export LSCOLORS=Exfxcxdxcxegedabagaced
+
+# Aliases
+alias ll='ls -la'
+alias l='ls -l'
+alias cd='z'
+alias ..='z ..'
+alias ...='z ../..'
+alias grep='grep --color=auto'
+alias mkdir='mkdir -pv'
+alias path='echo $PATH | tr ":" "\n"'
+
+# Claude
+export PATH="$HOME/.local/bin:$PATH"
+export ENABLE_LSP_TOOL=1
+
+# GitHub
+export GITHUB_PERSONAL_ACCESS_TOKEN="$(gh auth token)"
+
+# bun
+[ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# deno
+[ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"

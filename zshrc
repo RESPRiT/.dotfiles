@@ -1,4 +1,4 @@
-# z
+# zoxide
 eval "$(zoxide init zsh)"
 export _ZO_DOCTOR=0
 
@@ -32,40 +32,12 @@ setopt COMPLETE_ALIASES
 # Shift-tab to cycle backwards
 bindkey -M menuselect '^[[Z' reverse-menu-complete
 
-# Colorized ls
-export CLICOLOR=1
-export LSCOLORS=Exfxcxdxcxegedabagaced
-
-# Aliases
-alias ll='ls -la'
-alias l='ls -l'
-alias cd='z'
-alias ..='z ..'
-alias ...='z ../..'
-alias grep='grep --color=auto'
-alias mkdir='mkdir -pv'
-alias path='echo $PATH | tr ":" "\n"'
-
-# Source machine-local config if present
-[ -f ~/.zshrc.local ] && source ~/.zshrc.local
-
-# Claude
-export PATH="$HOME/.local/bin:$PATH"
-export ENABLE_LSP_TOOL=1
-
-# GitHub
-export GITHUB_PERSONAL_ACCESS_TOKEN="$(gh auth token)"
+# Shared config
+. ~/.shellrc
 
 # atuin
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init zsh)"
 
-# bun completions
-[ -s "/Users/resprit/.bun/_bun" ] && source "/Users/resprit/.bun/_bun"
-
-# bun
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
-
-# deno
-. "/Users/resprit/.deno/env"
+# Source machine-local config if present
+[ -f ~/.zshrc.local ] && source ~/.zshrc.local

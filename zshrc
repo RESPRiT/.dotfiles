@@ -53,6 +53,9 @@ alias path='echo $PATH | tr ":" "\n"'
 export PATH="$HOME/.local/bin:$PATH"
 export ENABLE_LSP_TOOL=1
 
+# GitHub
+export GITHUB_PERSONAL_ACCESS_TOKEN="$(gh auth token)"
+
 # atuin
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init zsh)"

@@ -8,6 +8,10 @@ link() {
   if [ -L "$dst" ]; then
     rm "$dst"
   elif [ -e "$dst" ]; then
+    if [ -e "${dst}.bak" ]; then
+      echo "Error: ${dst}.bak already exists. Reconcile manually before installing." >&2
+      exit 1
+    fi
     echo "Backing up existing $dst -> ${dst}.bak"
     mv "$dst" "${dst}.bak"
   fi
@@ -29,6 +33,10 @@ link_shell() {
   fi
   ln -s "$src" "$dst"
   echo "Linked $dst -> $src"
+  if [ ! -e "$local" ]; then
+    echo "# Machine-specific configuration for this host" > "$local"
+    echo "Created $local"
+  fi
 }
 
 # Shell
@@ -54,17 +62,25 @@ mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"
 
 # atuin
-curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh
+if ! command -v atuin &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh
+else
+  echo "atuin already installed, skipping"
+fi
 
-echo ""
-read -rp "Atuin username: " ATUIN_USERNAME
-read -rsp "Atuin password: " ATUIN_PASSWORD
-echo ""
-read -rsp "Atuin key: " ATUIN_KEY
-echo ""
+if ! atuin status &>/dev/null; then
+  echo ""
+  read -rp "Atuin username: " ATUIN_USERNAME
+  read -rsp "Atuin password: " ATUIN_PASSWORD
+  echo ""
+  read -rsp "Atuin key: " ATUIN_KEY
+  echo ""
 
-atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
-atuin sync
+  atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
+  atuin sync
+else
+  echo "atuin already logged in, skipping"
+fi
 
 echo ""
 echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"

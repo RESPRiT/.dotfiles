@@ -1,6 +1,6 @@
-# SSH agent (keychain)
-if command -v keychain &>/dev/null; then
-  eval "$(keychain --eval id_ed25519)"
+# SSH agent (keychain) — use per-user binary to avoid clashing with 1Password etc.
+if [ -x "$HOME/.local/bin/keychain" ]; then
+  eval "$("$HOME/.local/bin/keychain" --eval id_ed25519)"
 fi
 
 # Auto-update dotfiles (set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local or ~/.bashrc.local)

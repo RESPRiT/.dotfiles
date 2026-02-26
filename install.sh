@@ -85,8 +85,8 @@ link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"
 
 # keychain (SSH agent management)
 _install_keychain=true
-if command -v keychain &>/dev/null; then
-  echo "keychain already installed, skipping"
+if [ -x "$HOME/.local/bin/keychain" ]; then
+  echo "keychain already installed (~/.local/bin/keychain), skipping"
   _install_keychain=false
 elif [ -S "$HOME/.1password/agent.sock" ]; then
   echo "keychain skipped: 1Password SSH agent detected"
@@ -99,15 +99,11 @@ fi
 if [ "$_install_keychain" = true ]; then
   read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? [y/N]${RESET} " _kc_answer
   if [[ "$_kc_answer" =~ ^[Yy]$ ]]; then
-    if [ "$(uname)" = "Darwin" ]; then
-      brew install keychain
-    else
-      mkdir -p "$HOME/.local/bin"
-      curl -fsSL https://github.com/danielrobbins/keychain/releases/latest/download/keychain \
-        -o "$HOME/.local/bin/keychain"
-      chmod +x "$HOME/.local/bin/keychain"
-    fi
-    echo "Installed keychain"
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL https://github.com/danielrobbins/keychain/releases/latest/download/keychain \
+      -o "$HOME/.local/bin/keychain"
+    chmod +x "$HOME/.local/bin/keychain"
+    echo "Installed keychain to ~/.local/bin/keychain"
   else
     echo "keychain install skipped"
   fi

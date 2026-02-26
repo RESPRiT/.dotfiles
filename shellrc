@@ -47,7 +47,6 @@ alias ...='z ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'
-alias hzr='ssh harrison@REDACTED'
 
 # Claude
 export PATH="$HOME/.local/bin:$PATH"

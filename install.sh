@@ -55,7 +55,11 @@ fi
 
 # Claude Code
 mkdir -p "$HOME/.claude"
-link "$DOTFILES/claude/settings.local.json" "$HOME/.claude/settings.local.json"
+if [ ! -e "$HOME/.claude/settings.local.json" ]; then
+  link "$DOTFILES/claude/settings.local.json" "$HOME/.claude/settings.local.json"
+else
+  echo "$HOME/.claude/settings.local.json already exists, skipping"
+fi
 
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"
@@ -100,15 +104,21 @@ else
 fi
 
 if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
-  echo ""
-  read -rp "Atuin username: " ATUIN_USERNAME
-  read -rsp "Atuin password: " ATUIN_PASSWORD
-  echo ""
-  read -rsp "Atuin key: " ATUIN_KEY
-  echo ""
+  read -rp "Log in to Atuin sync? [y/N] " _atuin_answer
+  if [[ "$_atuin_answer" =~ ^[Yy]$ ]]; then
+    echo ""
+    read -rp "Atuin username: " ATUIN_USERNAME
+    read -rsp "Atuin password: " ATUIN_PASSWORD
+    echo ""
+    read -rsp "Atuin key: " ATUIN_KEY
+    echo ""
 
-  atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
-  atuin sync
+    atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
+    atuin sync
+  else
+    echo "Atuin login skipped"
+  fi
+  unset _atuin_answer
 else
   echo "atuin already logged in, skipping"
 fi

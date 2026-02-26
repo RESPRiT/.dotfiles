@@ -3,7 +3,19 @@ eval "$(zoxide init zsh)"
 export _ZO_DOCTOR=0
 
 # Prompt: user@machine in light blue, current dir only, with %
-PROMPT='%F{117}%n@%m%f %2~ %# '
+setopt PROMPT_SUBST
+
+_git_branch_info() {
+  local branch
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
+  if [[ "$branch" == "main" || "$branch" == "master" ]]; then
+    printf ' %%F{218}(%s)%%f' "$branch"
+  else
+    printf ' %%F{green}(%s)%%f' "$branch"
+  fi
+}
+
+PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info) %# '
 
 # History
 HISTFILE=~/.zsh_history

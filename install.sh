@@ -49,18 +49,35 @@ link_shell "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
 link_shell "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
 
 # Auto-update dotfiles on shell startup
-read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [y/N]${RESET} " _autoupdate_answer
-if [[ "$_autoupdate_answer" =~ ^[Yy]$ ]]; then
+_autoupdate_configured=false
+if [ -n "$DOTFILES_AUTO_UPDATE" ]; then
+  _autoupdate_configured=true
+else
   for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
-    if [ -f "$_local_rc" ] && ! grep -q 'DOTFILES_AUTO_UPDATE' "$_local_rc"; then
-      printf '\nexport DOTFILES_AUTO_UPDATE=1\n' >> "$_local_rc"
+    if [ -f "$_local_rc" ] && grep -q 'DOTFILES_AUTO_UPDATE' "$_local_rc"; then
+      _autoupdate_configured=true
+      break
     fi
   done
-  echo "Auto-update enabled (DOTFILES_AUTO_UPDATE=1 in local rc files)"
-else
-  echo "Auto-update not enabled. Set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local to enable later."
 fi
-unset _autoupdate_answer _local_rc
+
+if [ "$_autoupdate_configured" = true ]; then
+  echo "Auto-update already configured, skipping"
+else
+  read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [y/N]${RESET} " _autoupdate_answer
+  if [[ "$_autoupdate_answer" =~ ^[Yy]$ ]]; then
+    for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+      if [ -f "$_local_rc" ] && ! grep -q 'DOTFILES_AUTO_UPDATE' "$_local_rc"; then
+        printf '\nexport DOTFILES_AUTO_UPDATE=1\n' >> "$_local_rc"
+      fi
+    done
+    echo "Auto-update enabled (DOTFILES_AUTO_UPDATE=1 in local rc files)"
+  else
+    echo "Auto-update not enabled. Set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local to enable later."
+  fi
+  unset _autoupdate_answer
+fi
+unset _autoupdate_configured _local_rc
 
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"
@@ -129,6 +146,7 @@ if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
 
     atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
     atuin sync
+    echo "Atuin login and sync complete"
   else
     echo "Atuin login skipped"
   fi

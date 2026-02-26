@@ -28,5 +28,5 @@ bind '"\e[Z":menu-complete-backward'
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init bash)"
 
-# Source machine-local config if present
+# Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local

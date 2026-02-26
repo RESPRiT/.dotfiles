@@ -51,5 +51,5 @@ bindkey -M menuselect '^[[Z' reverse-menu-complete
 . "$HOME/.atuin/bin/env"
 eval "$(atuin init zsh)"
 
-# Source machine-local config if present
+# Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local

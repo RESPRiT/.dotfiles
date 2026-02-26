@@ -1,9 +1,9 @@
 # SSH agent (keychain)
 if command -v keychain &>/dev/null; then
-  eval "$(keychain --eval --agents ssh id_ed25519)"
+  eval "$(keychain --eval id_ed25519)"
 fi
 
-# Auto-update dotfiles
+# Auto-update dotfiles (set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local or ~/.bashrc.local)
 _dotfiles_update() {
   local dotfiles="$HOME/.dotfiles"
   local backup="$dotfiles/backup"
@@ -22,14 +22,18 @@ _dotfiles_update() {
     [ -f "$dotfiles/$f" ] || continue
     bname="${f//\//_}"
     cp "$dotfiles/$f" "$backup/${bname}.${timestamp}.bak"
-    ls "$backup/${bname}".*.bak 2>/dev/null | sort | head -n -5 | while IFS= read -r old; do
-      rm -f "$old"
-    done
+    local count
+    count=$(ls "$backup/${bname}".*.bak 2>/dev/null | wc -l)
+    if [ "$count" -gt 5 ]; then
+      ls "$backup/${bname}".*.bak 2>/dev/null | sort | head -n $(( count - 5 )) | while IFS= read -r old; do
+        rm -f "$old"
+      done
+    fi
   done
 
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null
 }
-if [ -d "$HOME/.dotfiles/.git" ]; then
+if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
   (_dotfiles_update &)
 fi
 unset -f _dotfiles_update
@@ -47,6 +51,28 @@ alias ...='z ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'
+alias reload='exec $SHELL -l'
+
+# Functions
+extract() {
+  if [ ! -f "$1" ]; then
+    echo "extract: '$1' is not a file" >&2
+    return 1
+  fi
+  case "$1" in
+    *.tar.bz2) tar xjf "$1" ;;
+    *.tar.gz)  tar xzf "$1" ;;
+    *.tar.xz)  tar xJf "$1" ;;
+    *.tar)     tar xf "$1" ;;
+    *.bz2)     bunzip2 "$1" ;;
+    *.gz)      gunzip "$1" ;;
+    *.zip)     unzip "$1" ;;
+    *.Z)       uncompress "$1" ;;
+    *.7z)      7z x "$1" ;;
+    *.rar)     unrar x "$1" ;;
+    *) echo "extract: unsupported format '$1'" >&2; return 1 ;;
+  esac
+}
 
 # Claude
 export PATH="$HOME/.local/bin:$PATH"

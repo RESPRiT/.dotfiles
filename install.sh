@@ -48,6 +48,20 @@ link "$DOTFILES/shellrc" "$HOME/.shellrc"
 link_shell "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
 link_shell "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
 
+# Auto-update dotfiles on shell startup
+read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [y/N]${RESET} " _autoupdate_answer
+if [[ "$_autoupdate_answer" =~ ^[Yy]$ ]]; then
+  for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+    if [ -f "$_local_rc" ] && ! grep -q 'DOTFILES_AUTO_UPDATE' "$_local_rc"; then
+      printf '\nexport DOTFILES_AUTO_UPDATE=1\n' >> "$_local_rc"
+    fi
+  done
+  echo "Auto-update enabled (DOTFILES_AUTO_UPDATE=1 in local rc files)"
+else
+  echo "Auto-update not enabled. Set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local to enable later."
+fi
+unset _autoupdate_answer _local_rc
+
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"
 mkdir -p "$HOME/.vim/pack/plugins/start"

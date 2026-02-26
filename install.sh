@@ -61,6 +61,37 @@ link "$DOTFILES/claude/settings.local.json" "$HOME/.claude/settings.local.json"
 mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"
 
+# keychain (SSH agent management)
+_install_keychain=true
+if command -v keychain &>/dev/null; then
+  echo "keychain already installed, skipping"
+  _install_keychain=false
+elif [ -S "$HOME/.1password/agent.sock" ]; then
+  echo "keychain skipped: 1Password SSH agent detected"
+  _install_keychain=false
+elif [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null; then
+  echo "keychain skipped: existing SSH agent with loaded keys detected"
+  _install_keychain=false
+fi
+
+if [ "$_install_keychain" = true ]; then
+  read -rp "Install keychain for SSH agent management? [y/N] " _kc_answer
+  if [[ "$_kc_answer" =~ ^[Yy]$ ]]; then
+    if [ "$(uname)" = "Darwin" ]; then
+      brew install keychain
+    else
+      mkdir -p "$HOME/.local/bin"
+      curl -fsSL https://github.com/danielrobbins/keychain/releases/latest/download/keychain \
+        -o "$HOME/.local/bin/keychain"
+      chmod +x "$HOME/.local/bin/keychain"
+    fi
+    echo "Installed keychain"
+  else
+    echo "keychain install skipped"
+  fi
+fi
+unset _install_keychain _kc_answer
+
 # atuin
 if ! command -v atuin &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh

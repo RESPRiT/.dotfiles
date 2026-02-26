@@ -1,9 +1,14 @@
+# SSH agent (keychain)
+if command -v keychain &>/dev/null; then
+  eval "$(keychain --eval --agents ssh id_ed25519)"
+fi
+
 # Auto-update dotfiles
 _dotfiles_update() {
   local dotfiles="$HOME/.dotfiles"
   local backup="$dotfiles/backup"
 
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git -C "$dotfiles" fetch --quiet 2>/dev/null || return
+  GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" fetch --quiet 2>/dev/null || return
 
   local changed
   changed=$(git -C "$dotfiles" diff --name-only HEAD..@{u} 2>/dev/null)
@@ -22,7 +27,7 @@ _dotfiles_update() {
     done
   done
 
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null
+  GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null
 }
 if [ -d "$HOME/.dotfiles/.git" ]; then
   (_dotfiles_update &)

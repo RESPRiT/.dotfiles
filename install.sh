@@ -68,7 +68,7 @@ else
   echo "atuin already installed, skipping"
 fi
 
-if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/session" ]; then
+if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
   echo ""
   read -rp "Atuin username: " ATUIN_USERNAME
   read -rsp "Atuin password: " ATUIN_PASSWORD

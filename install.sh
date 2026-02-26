@@ -3,6 +3,10 @@ set -e
 
 DOTFILES="$(cd "$(dirname "$0")" && pwd)"
 
+# Bold light blue (ANSI 117) to match shell prompt
+PROMPT_COLOR=$'\033[1;38;5;117m'
+RESET=$'\033[0m'
+
 link() {
   local src="$1" dst="$2"
   if [ -L "$dst" ]; then
@@ -79,7 +83,7 @@ elif [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null; then
 fi
 
 if [ "$_install_keychain" = true ]; then
-  read -rp "Install keychain for SSH agent management? [y/N] " _kc_answer
+  read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? [y/N]${RESET} " _kc_answer
   if [[ "$_kc_answer" =~ ^[Yy]$ ]]; then
     if [ "$(uname)" = "Darwin" ]; then
       brew install keychain
@@ -104,13 +108,13 @@ else
 fi
 
 if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
-  read -rp "Log in to Atuin sync? [y/N] " _atuin_answer
+  read -rp "${PROMPT_COLOR}Log in to Atuin sync? [y/N]${RESET} " _atuin_answer
   if [[ "$_atuin_answer" =~ ^[Yy]$ ]]; then
     echo ""
-    read -rp "Atuin username: " ATUIN_USERNAME
-    read -rsp "Atuin password: " ATUIN_PASSWORD
+    read -rp "${PROMPT_COLOR}Atuin username:${RESET} " ATUIN_USERNAME
+    read -rsp "${PROMPT_COLOR}Atuin password:${RESET} " ATUIN_PASSWORD
     echo ""
-    read -rsp "Atuin key: " ATUIN_KEY
+    read -rsp "${PROMPT_COLOR}Atuin key:${RESET} " ATUIN_KEY
     echo ""
 
     atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"

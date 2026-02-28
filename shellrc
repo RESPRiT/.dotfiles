@@ -42,9 +42,18 @@ unset -f _dotfiles_update
 export CLICOLOR=1
 export LSCOLORS=Exfxcxdxcxegedabagaced
 
+# eza (modern ls)
+if command -v eza &>/dev/null; then
+  alias ls='eza --icons'
+  alias ll='eza -la --icons'
+  alias l='eza -l --icons'
+else
+  alias ll='ls -la'
+  alias l='ls -l'
+fi
+
 # Aliases
-alias ll='ls -la'
-alias l='ls -l'
+alias gs='git status'
 alias cd='z'
 alias ..='z ..'
 alias ...='z ../..'
@@ -85,3 +94,6 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # deno
 [ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"
+
+# rust
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"

@@ -5,6 +5,8 @@ DOTFILES="$(cd "$(dirname "$0")" && pwd)"
 
 # Bold light blue (ANSI 117) to match shell prompt
 PROMPT_COLOR=$'\033[1;38;5;117m'
+YES_COLOR=$'\033[1;38;5;120m'   # light green
+NO_COLOR=$'\033[1;38;5;248m'    # grey
 RESET=$'\033[0m'
 
 link() {
@@ -64,8 +66,9 @@ fi
 if [ "$_autoupdate_configured" = true ]; then
   echo "Auto-update already configured, skipping"
 else
-  read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [y/N]${RESET} " _autoupdate_answer
+  read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [${YES_COLOR}y${PROMPT_COLOR}/${NO_COLOR}N${PROMPT_COLOR}]${RESET} " _autoupdate_answer
   if [[ "$_autoupdate_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}Enabling auto-update...${RESET}"
     for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
       if [ -f "$_local_rc" ] && ! grep -q 'DOTFILES_AUTO_UPDATE' "$_local_rc"; then
         printf '\nexport DOTFILES_AUTO_UPDATE=1\n' >> "$_local_rc"
@@ -73,7 +76,7 @@ else
     done
     echo "Auto-update enabled (DOTFILES_AUTO_UPDATE=1 in local rc files)"
   else
-    echo "Auto-update not enabled. Set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local to enable later."
+    echo "${NO_COLOR}Skipping auto-update${RESET}"
   fi
   unset _autoupdate_answer
 fi
@@ -114,18 +117,34 @@ elif [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null; then
 fi
 
 if [ "$_install_keychain" = true ]; then
-  read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? [y/N]${RESET} " _kc_answer
+  read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? [${YES_COLOR}y${PROMPT_COLOR}/${NO_COLOR}N${PROMPT_COLOR}]${RESET} " _kc_answer
   if [[ "$_kc_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}Installing keychain...${RESET}"
     mkdir -p "$HOME/.local/bin"
     curl -fsSL https://github.com/danielrobbins/keychain/releases/latest/download/keychain \
       -o "$HOME/.local/bin/keychain"
     chmod +x "$HOME/.local/bin/keychain"
     echo "Installed keychain to ~/.local/bin/keychain"
   else
-    echo "keychain install skipped"
+    echo "${NO_COLOR}Skipping keychain${RESET}"
   fi
 fi
 unset _install_keychain _kc_answer
+
+# zoxide
+if command -v zoxide &>/dev/null; then
+  echo "zoxide already installed, skipping"
+else
+  read -rp "${PROMPT_COLOR}Install zoxide (smarter cd)? [${YES_COLOR}y${PROMPT_COLOR}/${NO_COLOR}N${PROMPT_COLOR}]${RESET} " _zoxide_answer
+  if [[ "$_zoxide_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}Installing zoxide...${RESET}"
+    curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
+    echo "Installed zoxide"
+  else
+    echo "${NO_COLOR}Skipping zoxide${RESET}"
+  fi
+  unset _zoxide_answer
+fi
 
 # atuin
 if ! command -v atuin &>/dev/null; then
@@ -135,9 +154,9 @@ else
 fi
 
 if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
-  read -rp "${PROMPT_COLOR}Log in to Atuin sync? [y/N]${RESET} " _atuin_answer
+  read -rp "${PROMPT_COLOR}Log in to Atuin sync? [${YES_COLOR}y${PROMPT_COLOR}/${NO_COLOR}N${PROMPT_COLOR}]${RESET} " _atuin_answer
   if [[ "$_atuin_answer" =~ ^[Yy]$ ]]; then
-    echo ""
+    echo "${YES_COLOR}Logging in to Atuin...${RESET}"
     read -rp "${PROMPT_COLOR}Atuin username:${RESET} " ATUIN_USERNAME
     read -rsp "${PROMPT_COLOR}Atuin password:${RESET} " ATUIN_PASSWORD
     echo ""
@@ -148,7 +167,7 @@ if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
     atuin sync
     echo "Atuin login and sync complete"
   else
-    echo "Atuin login skipped"
+    echo "${NO_COLOR}Skipping Atuin login${RESET}"
   fi
   unset _atuin_answer
 else

@@ -60,7 +60,7 @@ alias ...='z ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'
-alias reload='exec $SHELL -l'
+reload() { source ~/.zshrc; }
 
 # Functions
 extract() {

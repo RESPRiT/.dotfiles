@@ -147,31 +147,6 @@ else
   unset _zoxide_answer
 fi
 
-# eza (modern ls)
-if command -v eza &>/dev/null; then
-  echo "eza already installed, skipping"
-else
-  _eza_prompt="Install eza (modern ls)?"
-  if ! command -v cargo &>/dev/null; then
-    _eza_prompt="Install eza (modern ls)? (will also install Rust)"
-  fi
-  read -rp "${PROMPT_COLOR}${_eza_prompt} [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _eza_answer
-  unset _eza_prompt
-  if [[ "$_eza_answer" =~ ^[Yy]$ ]]; then
-    echo "${YES_COLOR}(Selected y) Installing eza...${RESET}"
-    if ! command -v cargo &>/dev/null; then
-      echo "Rust/Cargo not found, installing via rustup..."
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      . "$HOME/.cargo/env"
-    fi
-    cargo install eza
-    echo "Installed eza"
-  else
-    echo "${NO_COLOR}(Selected N) Skipping eza${RESET}"
-  fi
-  unset _eza_answer
-fi
-
 # atuin
 if ! command -v atuin &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh

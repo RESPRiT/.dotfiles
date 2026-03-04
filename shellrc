@@ -54,7 +54,13 @@ alias ...='z ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'
-reload() { source ~/.zshrc; }
+reload() {
+  if [ -n "$BASH_VERSION" ]; then
+    source ~/.bashrc
+  else
+    source ~/.zshrc
+  fi
+}
 
 # Functions
 extract() {

@@ -31,7 +31,8 @@ _dotfiles_update() {
     fi
   done
 
-  GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null
+  GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null \
+    && echo "[dotfiles] Updated from remote"
 }
 if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
   (_dotfiles_update &)
@@ -53,7 +54,13 @@ alias ...='z ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'
-reload() { source ~/.zshrc; }
+reload() {
+  if [ -n "$BASH_VERSION" ]; then
+    source ~/.bashrc
+  else
+    source ~/.zshrc
+  fi
+}
 
 # Functions
 extract() {

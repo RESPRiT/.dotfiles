@@ -6,7 +6,7 @@ DOTFILES="$(cd "$(dirname "$0")" && pwd)"
 # Bold light blue (ANSI 117) to match shell prompt
 PROMPT_COLOR=$'\033[1;38;5;117m'
 YES_COLOR=$'\033[1;38;5;120m'   # light green
-NO_COLOR=$'\033[1;38;5;248m'    # grey
+NO_COLOR=$'\033[1;38;5;210m'    # light red (matches N highlight)
 N_COLOR=$'\033[1;38;5;210m'     # light red (for N in y/N prompts)
 RESET=$'\033[0m'
 

@@ -26,6 +26,7 @@ bind '"\e[Z":menu-complete-backward'
 
 # atuin
 . "$HOME/.atuin/bin/env"
+[[ -f ~/.bash-preexec.sh ]] && source ~/.bash-preexec.sh
 eval "$(atuin init bash)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win

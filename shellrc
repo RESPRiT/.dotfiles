@@ -97,3 +97,6 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # rust
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# go
+[ -d /usr/local/go/bin ] && export PATH="/usr/local/go/bin:$PATH"

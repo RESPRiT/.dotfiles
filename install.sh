@@ -132,6 +132,52 @@ if [ "$_install_keychain" = true ]; then
 fi
 unset _install_keychain _kc_answer
 
+# Rust / Cargo
+if command -v cargo &>/dev/null; then
+  echo "cargo already installed, skipping"
+else
+  read -rp "${PROMPT_COLOR}Install Rust and Cargo? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _rust_answer
+  if [[ "$_rust_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Installing Rust...${RESET}"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env"
+    echo "Installed Rust and Cargo"
+  else
+    echo "${NO_COLOR}(Selected N) Skipping Rust${RESET}"
+  fi
+  unset _rust_answer
+fi
+
+# Go
+if command -v go &>/dev/null; then
+  echo "go already installed, skipping"
+else
+  read -rp "${PROMPT_COLOR}Install Go? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _go_answer
+  if [[ "$_go_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Installing Go...${RESET}"
+    _go_version="1.24.1"
+    _go_arch="$(uname -m)"
+    if [ "$_go_arch" = "x86_64" ]; then
+      _go_arch="amd64"
+    elif [ "$_go_arch" = "aarch64" ] || [ "$_go_arch" = "arm64" ]; then
+      _go_arch="arm64"
+    fi
+    _go_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    _go_tarball="go${_go_version}.${_go_os}-${_go_arch}.tar.gz"
+    curl -fsSL "https://go.dev/dl/${_go_tarball}" -o "/tmp/${_go_tarball}"
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "/tmp/${_go_tarball}"
+    rm -f "/tmp/${_go_tarball}"
+    export PATH="/usr/local/go/bin:$PATH"
+    echo "Installed Go $(go version)"
+    unset _go_version _go_arch _go_os _go_tarball
+  else
+    echo "${NO_COLOR}(Selected N) Skipping Go${RESET}"
+  fi
+  unset _go_answer
+fi
+
 # zoxide
 if command -v zoxide &>/dev/null; then
   echo "zoxide already installed, skipping"
@@ -149,7 +195,14 @@ fi
 
 # atuin
 if ! command -v atuin &>/dev/null; then
-  curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh
+  if ! curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh; then
+    echo "atuin installer failed, trying cargo install..."
+    if command -v cargo &>/dev/null; then
+      cargo install atuin
+    else
+      echo "cargo not found, skipping atuin install"
+    fi
+  fi
 else
   echo "atuin already installed, skipping"
 fi

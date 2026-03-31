@@ -1,3 +1,6 @@
+# Shared config (early, so PATH is set before tools that depend on it)
+. ~/.shellrc
+
 # zoxide
 eval "$(zoxide init bash)"
 export _ZO_DOCTOR=0
@@ -21,13 +24,9 @@ bind 'set completion-ignore-case on'
 bind 'TAB:menu-complete'
 bind '"\e[Z":menu-complete-backward'
 
-# Shared config
-. ~/.shellrc
-
 # atuin
-. "$HOME/.atuin/bin/env"
-eval "$(atuin init bash)"
+[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
+command -v atuin &>/dev/null && eval "$(atuin init bash)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
-. "$HOME/.cargo/env"

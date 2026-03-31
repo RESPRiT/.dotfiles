@@ -1,3 +1,6 @@
+# Shared config (early, so PATH is set before tools that depend on it)
+. ~/.shellrc
+
 # zoxide
 eval "$(zoxide init zsh)"
 export _ZO_DOCTOR=0
@@ -54,12 +57,9 @@ setopt COMPLETE_ALIASES
 # Shift-tab to cycle backwards
 bindkey -M menuselect '^[[Z' reverse-menu-complete
 
-# Shared config
-. ~/.shellrc
-
 # atuin
-. "$HOME/.atuin/bin/env"
-eval "$(atuin init zsh)"
+[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
+command -v atuin &>/dev/null && eval "$(atuin init zsh)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local

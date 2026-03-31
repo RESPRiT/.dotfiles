@@ -2,8 +2,8 @@
 . ~/.shellrc
 
 # zoxide
-eval "$(zoxide init zsh)"
 export _ZO_DOCTOR=0
+eval "$(zoxide init zsh)"
 
 # Prompt: user@machine in light blue, current dir only, with %
 setopt PROMPT_SUBST
@@ -63,6 +63,3 @@ command -v atuin &>/dev/null && eval "$(atuin init zsh)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
-
-# bun completions
-[ -s "/Users/harrison/.bun/_bun" ] && source "/Users/harrison/.bun/_bun"

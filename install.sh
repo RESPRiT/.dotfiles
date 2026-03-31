@@ -194,17 +194,24 @@ else
 fi
 
 # atuin
-if ! command -v atuin &>/dev/null; then
-  if ! curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh; then
-    echo "atuin installer failed, trying cargo install..."
-    if command -v cargo &>/dev/null; then
-      cargo install atuin
-    else
-      echo "cargo not found, skipping atuin install"
-    fi
-  fi
-else
+if command -v atuin &>/dev/null; then
   echo "atuin already installed, skipping"
+else
+  read -rp "${PROMPT_COLOR}Install atuin (shell history sync)? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _atuin_install_answer
+  if [[ "$_atuin_install_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Installing atuin...${RESET}"
+    if ! curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh; then
+      echo "atuin installer failed, trying cargo install..."
+      if command -v cargo &>/dev/null; then
+        cargo install atuin
+      else
+        echo "cargo not found, skipping atuin install"
+      fi
+    fi
+  else
+    echo "${NO_COLOR}(Selected N) Skipping atuin${RESET}"
+  fi
+  unset _atuin_install_answer
 fi
 
 if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then

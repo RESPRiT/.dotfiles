@@ -2,8 +2,8 @@
 . ~/.shellrc
 
 # zoxide
-eval "$(zoxide init bash)"
 export _ZO_DOCTOR=0
+eval "$(zoxide init bash)"
 
 # Prompt: user@machine in light blue, current dir, with $/#
 PS1='\[\e[38;5;117m\]\u@\h\[\e[0m\] \w \$ '

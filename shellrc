@@ -1,3 +1,11 @@
+# Prepend to PATH only if not already present (avoids stacking on reload)
+path_prepend() {
+  case ":$PATH:" in
+    *:"$1":*) ;;
+    *) export PATH="$1:$PATH" ;;
+  esac
+}
+
 # SSH agent (keychain) — use per-user binary to avoid clashing with 1Password etc.
 if [ -x "$HOME/.local/bin/keychain" ]; then
   eval "$("$HOME/.local/bin/keychain" --eval id_ed25519)"
@@ -84,13 +92,13 @@ extract() {
 }
 
 # Claude
-export PATH="$HOME/.local/bin:$PATH"
+path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
 
 # bun
 [ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
 export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
+path_prepend "$BUN_INSTALL/bin"
 
 # deno
 [ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"
@@ -99,4 +107,4 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 # go
-[ -d /usr/local/go/bin ] && export PATH="/usr/local/go/bin:$PATH"
+[ -d /usr/local/go/bin ] && path_prepend "/usr/local/go/bin"

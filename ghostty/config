@@ -3,5 +3,6 @@ cursor-style = block
 theme = Solarized Dark Higher Contrast
 shell-integration-features = no-cursor,ssh-env
 background-opacity = 0.9
+auto-update-channel = tip
 
 keybind = super+f=start_search

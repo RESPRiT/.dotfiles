@@ -9,13 +9,18 @@ eval "$(zoxide init zsh)"
 setopt PROMPT_SUBST
 
 _git_branch_info() {
-  local branch
+  local branch dirty=""
   branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
-  if [[ "$branch" == "main" || "$branch" == "master" ]]; then
-    printf ' %%F{218}(%s)%%f' "$branch"
+  git diff --quiet 2>/dev/null || dirty="*"
+  local color
+  if [[ -n "$dirty" ]]; then
+    color="210"
+  elif [[ "$branch" == "main" || "$branch" == "master" ]]; then
+    color="218"
   else
-    printf ' %%F{green}(%s)%%f' "$branch"
+    color="green"
   fi
+  printf ' %%F{%s}(%s%s)%%f' "$color" "$dirty" "$branch"
 }
 
 _outbox_count() {

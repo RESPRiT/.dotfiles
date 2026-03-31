@@ -23,17 +23,7 @@ _git_branch_info() {
   printf ' %%F{%s}(%s%s)%%f' "$color" "$dirty" "$branch"
 }
 
-_outbox_count() {
-  local n
-  n=$(find ~/.metacog/outbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-  (( n > 0 )) && printf ' %%F{red}(%d)%%f' "$n"
-}
-
-PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info)$(_outbox_count) %# '
-
-# Suppress glob expansion for message tools
-alias inbox='noglob inbox'
-alias outbox='noglob outbox'
+PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info) %# '
 
 # History
 HISTFILE=~/.zsh_history

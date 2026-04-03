@@ -32,4 +32,3 @@ command -v atuin &>/dev/null && eval "$(atuin init bash)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
-. "$HOME/.cargo/env"

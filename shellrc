@@ -95,8 +95,8 @@ extract() {
 path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
 
-# bun
-[ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
+# bun (completions are zsh-specific)
+[ -n "$ZSH_VERSION" ] && [ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
 export BUN_INSTALL="$HOME/.bun"
 path_prepend "$BUN_INSTALL/bin"
 

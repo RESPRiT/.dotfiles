@@ -256,14 +256,19 @@ fi
 echo ""
 echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"
 
-# Source the current shell's rc so the session picks up new config immediately
-if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
-  echo "Sourcing ~/.bashrc..."
-  # shellcheck disable=SC1091
-  source "$HOME/.bashrc"
-elif [ -n "$ZSH_VERSION" ] && [ -f "$HOME/.zshrc" ]; then
-  echo "Sourcing ~/.zshrc..."
-  # shellcheck disable=SC1091
-  source "$HOME/.zshrc"
-fi
+# Source the current shell's rc so the session picks up new config immediately.
+# Check $SHELL (login shell) rather than $BASH_VERSION/$ZSH_VERSION, because
+# this script always runs under #!/bin/bash regardless of the user's shell.
+case "$SHELL" in
+  */bash)
+    if [ -f "$HOME/.bashrc" ]; then
+      echo "Sourcing ~/.bashrc..."
+      # shellcheck disable=SC1091
+      source "$HOME/.bashrc"
+    fi
+    ;;
+  *)
+    echo "Restart your shell to pick up the new config."
+    ;;
+esac
 

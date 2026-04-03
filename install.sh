@@ -98,6 +98,9 @@ if [ ! -d "$HOME/.vim/pack/plugins/start/vim-colors-solarized" ]; then
   echo "Installed vim-colors-solarized"
 fi
 
+# Git hooks
+link "$DOTFILES/hooks/post-merge" "$DOTFILES/.git/hooks/post-merge"
+
 # Claude Code
 mkdir -p "$HOME/.claude"
 if [ ! -e "$HOME/.claude/settings.local.json" ]; then
@@ -243,6 +246,12 @@ if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
 else
   echo "atuin already logged in, skipping"
 fi
+
+# Seed migration tracker if missing, then run any pending migrations
+if [ ! -f "$HOME/.dotfiles-migrated" ]; then
+  echo "0" > "$HOME/.dotfiles-migrated"
+fi
+"$DOTFILES/hooks/post-merge"
 
 echo ""
 echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"

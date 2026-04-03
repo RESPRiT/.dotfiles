@@ -12,7 +12,10 @@ RESET=$'\033[0m'
 
 link() {
   local src="$1" dst="$2"
-  if [ -L "$dst" ]; then
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    echo "$dst already linked, skipping"
+    return
+  elif [ -L "$dst" ]; then
     rm "$dst"
   elif [ -e "$dst" ]; then
     if [ -e "${dst}.bak" ]; then
@@ -28,7 +31,10 @@ link() {
 
 link_shell() {
   local src="$1" dst="$2" local="$3"
-  if [ -L "$dst" ]; then
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    echo "$dst already linked, skipping"
+    return
+  elif [ -L "$dst" ]; then
     rm "$dst"
   elif [ -e "$dst" ]; then
     if [ -e "$local" ]; then
@@ -224,6 +230,9 @@ if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
     read -rsp "${PROMPT_COLOR}Atuin key:${RESET} " ATUIN_KEY
     echo ""
 
+    # atuin installer puts the binary in ~/.atuin/bin; ensure it's on PATH
+    export PATH="${HOME}/.atuin/bin:${HOME}/.cargo/bin:${PATH}"
+
     atuin login -u "$ATUIN_USERNAME" -p "$ATUIN_PASSWORD" -k "$ATUIN_KEY"
     atuin sync
     echo "Atuin login and sync complete"
@@ -237,4 +246,15 @@ fi
 
 echo ""
 echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"
+
+# Source the current shell's rc so the session picks up new config immediately
+if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+  echo "Sourcing ~/.bashrc..."
+  # shellcheck disable=SC1091
+  source "$HOME/.bashrc"
+elif [ -n "$ZSH_VERSION" ] && [ -f "$HOME/.zshrc" ]; then
+  echo "Sourcing ~/.zshrc..."
+  # shellcheck disable=SC1091
+  source "$HOME/.zshrc"
+fi
 

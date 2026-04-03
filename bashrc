@@ -20,9 +20,11 @@ PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 if [ -f /etc/bash_completion ]; then
   . /etc/bash_completion
 fi
-bind 'set completion-ignore-case on'
-bind 'TAB:menu-complete'
-bind '"\e[Z":menu-complete-backward'
+if [[ $- == *i* ]]; then
+  bind 'set completion-ignore-case on'
+  bind 'TAB:menu-complete'
+  bind '"\e[Z":menu-complete-backward'
+fi
 
 # atuin
 [ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
@@ -30,3 +32,4 @@ command -v atuin &>/dev/null && eval "$(atuin init bash)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
+. "$HOME/.cargo/env"

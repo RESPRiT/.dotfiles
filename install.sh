@@ -101,7 +101,7 @@ fi
 # Claude Code
 mkdir -p "$HOME/.claude"
 if [ ! -e "$HOME/.claude/settings.local.json" ]; then
-  link "$DOTFILES/claude/settings.local.json" "$HOME/.claude/settings.local.json"
+  link "$DOTFILES/claude-global/settings.local.json" "$HOME/.claude/settings.local.json"
 else
   echo "$HOME/.claude/settings.local.json already exists, skipping"
 fi

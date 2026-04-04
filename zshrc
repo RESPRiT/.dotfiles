@@ -23,7 +23,11 @@ _git_branch_info() {
   printf ' %%F{%s}(%s%s)%%f' "$color" "$dirty" "$branch"
 }
 
-PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info) %# '
+if [[ -n "$SSH_CONNECTION" ]]; then
+  PROMPT='%F{114}%n@%m%f %2~$(_git_branch_info) %# '
+else
+  PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info) %# '
+fi
 
 # History
 HISTFILE=~/.zsh_history

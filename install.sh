@@ -109,6 +109,9 @@ else
   echo "$HOME/.claude/settings.local.json already exists, skipping"
 fi
 
+# tmux
+link "$DOTFILES/tmux.conf" "$HOME/.tmux.conf"
+
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"

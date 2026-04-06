@@ -42,10 +42,7 @@ _dotfiles_update() {
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null \
     && echo "[dotfiles] Updated from remote"
 }
-if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
-  (_dotfiles_update &)
-fi
-unset -f _dotfiles_update
+# Execution is deferred to zshrc/bashrc (after local rc sets DOTFILES_AUTO_UPDATE)
 
 # COLORTERM doesn't survive SSH (sshd only accepts LANG/LC_*), but TERM does.
 # Infer truecolor from terminal-specific TERM values before falling back.

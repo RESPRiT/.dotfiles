@@ -62,3 +62,9 @@ command -v atuin &>/dev/null && eval "$(atuin init zsh)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
+
+# Auto-update dotfiles (must run after local rc sets DOTFILES_AUTO_UPDATE)
+if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
+  (_dotfiles_update &)
+fi
+unset -f _dotfiles_update

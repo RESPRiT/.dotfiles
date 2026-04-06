@@ -36,3 +36,9 @@ command -v atuin &>/dev/null && eval "$(atuin init bash)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
+
+# Auto-update dotfiles (must run after local rc sets DOTFILES_AUTO_UPDATE)
+if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
+  (_dotfiles_update &)
+fi
+unset -f _dotfiles_update

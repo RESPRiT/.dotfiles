@@ -29,6 +29,18 @@ When adding a new config file to the repo, prefer this pattern over the plain `l
 
 **Known gap:** Claude Code configuration files (`~/.claude/settings.local.json`, etc.) do not currently follow this pattern — they're symlinked directly with no local override mechanism, because JSON has no native include syntax and Claude Code doesn't merge multiple settings files. Revisit if/when Claude Code supports layered config.
 
+## Shell parity (bash + zsh)
+
+This repo treats bash and zsh as first-class shells. Shared shell config lives in `shellrc`, which is sourced by both `bashrc` and `zshrc`. When adding shell-level functionality (functions, aliases, exports, PATH tweaks), prefer `shellrc` so the behavior is consistent across both shells. Only put code in `zshrc`/`bashrc` directly when it's genuinely shell-specific (zsh completion, bash readline bindings, shell-specific prompt escapes, etc.).
+
+`shellrc` should stick to syntax that works in both shells:
+- Use `[ ... ]` (POSIX test), not `[[ ... ]]` (bash/zsh extension).
+- Use `printf '%q '` for shell-quoting args, not `${(q)@}` (zsh-only).
+- Use `command -v` (or a subshell `unset -f` trick when a function shadows the binary you're looking for) instead of `whence` (zsh-only) or `type -P` (bash-only).
+- `local` is acceptable — both shells support it, and the file already uses it.
+
+When in doubt, test the change in both `bash` and `zsh` before committing.
+
 ## Migration system
 
 Breaking changes between repo versions are handled by numbered scripts in `migrations/`. The system works as follows:

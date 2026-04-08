@@ -110,6 +110,25 @@ extract() {
 path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
 
+# Wrap `claude` in a chrome-less tmux session when launched from a bare
+# shell so the TUI gets clean framing (no status bar, no window list).
+# Inside an existing tmux session, run claude directly — the user's
+# manual session is intentional and should keep its normal lifecycle.
+# Unique PID-suffixed session names avoid duplicate-session errors;
+# destroy-unattached on makes the session die as soon as claude exits
+# or the terminal closes, matching an unwrapped claude's lifecycle.
+claude() {
+  if [ -n "$TMUX" ]; then
+    command claude "$@"
+  else
+    local claude_bin
+    claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
+    local cmd="$claude_bin"
+    [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
+    tmux new-session -s "claude-$$" "$cmd" \; set status off \; set destroy-unattached on
+  fi
+}
+
 # bun (completions are zsh-specific)
 [ -n "$ZSH_VERSION" ] && [ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
 export BUN_INSTALL="$HOME/.bun"

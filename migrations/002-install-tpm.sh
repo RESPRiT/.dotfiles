@@ -22,6 +22,17 @@ if [ ! -d "$TPM_DIR" ]; then
   echo "Installed tpm"
 fi
 
+# Skip plugin install if ~/.tmux.conf hasn't been linked yet (install.sh has
+# never run on this machine). The next install.sh run will handle it.
+if [ ! -f "$HOME/.tmux.conf" ]; then
+  echo "~/.tmux.conf not found, skipping plugin install"
+  exit 0
+fi
+
 if [ -x "$TPM_DIR/bin/install_plugins" ]; then
+  # install_plugins reads TMUX_PLUGIN_MANAGER_PATH from a tmux server, but
+  # `tmux start-server` alone doesn't load the conf. Source the conf first so
+  # the `run '~/.tmux/plugins/tpm/tpm'` line executes and sets the variable.
+  tmux start-server \; source-file "$HOME/.tmux.conf"
   "$TPM_DIR/bin/install_plugins"
 fi

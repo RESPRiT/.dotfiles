@@ -112,6 +112,16 @@ fi
 # tmux
 link_shell "$DOTFILES/tmux.conf" "$HOME/.tmux.conf" "$HOME/.tmux.local.conf"
 
+# tmux plugins (TPM)
+if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
+  mkdir -p "$HOME/.tmux/plugins"
+  git clone https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm"
+  echo "Installed tpm"
+fi
+if [ -x "$HOME/.tmux/plugins/tpm/bin/install_plugins" ]; then
+  "$HOME/.tmux/plugins/tpm/bin/install_plugins"
+fi
+
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"
 link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"

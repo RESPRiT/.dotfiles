@@ -110,7 +110,7 @@ else
 fi
 
 # tmux
-link "$DOTFILES/tmux.conf" "$HOME/.tmux.conf"
+link_shell "$DOTFILES/tmux.conf" "$HOME/.tmux.conf" "$HOME/.tmux.local.conf"
 
 # Ghostty
 mkdir -p "$HOME/.config/ghostty"

@@ -14,6 +14,21 @@ Idempotent setup script. Symlinks dotfiles into `$HOME`, installs plugins, sets 
 
 Machine-specific config goes in `~/.zshrc.local` or `~/.bashrc.local` (created by install.sh if missing).
 
+## Local override pattern
+
+All configuration files managed by this repo should strive to support a "dotfiles base + machine-local override" pattern, so per-host tweaks don't require forking the committed config:
+
+1. **Symlink the committed file** into `$HOME` using the `link_shell` helper in `install.sh` (not the plain `link` helper). On first install, any pre-existing real file at the destination is moved to a sibling `*.local` path instead of being backed up to `.bak`, and an empty `*.local` file is seeded if none exists.
+2. **Source the local file last** from the committed config, so anything in the local file overrides the defaults. The local file should be optional — guard the source with an existence check.
+
+Examples in the repo:
+- `zshrc:64` sources `~/.zshrc.local` after everything else
+- `tmux.conf` sources `~/.tmux.local.conf` via `if-shell` at the bottom
+
+When adding a new config file to the repo, prefer this pattern over the plain `link` helper unless there's a specific reason not to (e.g., the file format has no include/source mechanism).
+
+**Known gap:** Claude Code configuration files (`~/.claude/settings.local.json`, etc.) do not currently follow this pattern — they're symlinked directly with no local override mechanism, because JSON has no native include syntax and Claude Code doesn't merge multiple settings files. Revisit if/when Claude Code supports layered config.
+
 ## Migration system
 
 Breaking changes between repo versions are handled by numbered scripts in `migrations/`. The system works as follows:

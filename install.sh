@@ -6,14 +6,45 @@ DOTFILES="$(cd "$(dirname "$0")" && pwd)"
 # Bold light blue (ANSI 117) to match shell prompt
 PROMPT_COLOR=$'\033[1;38;5;117m'
 YES_COLOR=$'\033[1;38;5;120m'   # light green
-NO_COLOR=$'\033[1;38;5;210m'    # light red (matches N highlight)
-N_COLOR=$'\033[1;38;5;210m'     # light red (for N in y/N prompts)
+N_COLOR=$'\033[1;38;5;210m'     # light red (for N in y/[N] prompts)
+SKIP_COLOR=$'\033[38;5;240m'    # dark grey (for "already X" skip messages)
 RESET=$'\033[0m'
+
+# --fresh re-prompts every optional install by clearing stored "no" decisions.
+# Already-installed checks still skip, so the script stays idempotent.
+FRESH=false
+for arg in "$@"; do
+  case "$arg" in
+    --fresh) FRESH=true ;;
+  esac
+done
+
+# Persist [N] answers so we don't re-ask declined prompts on every run.
+# One key per line, exact-match against was_declined. Cleared by --fresh.
+DECISIONS_FILE="$HOME/.dotfiles-decisions"
+
+if [ "$FRESH" = true ] && [ -f "$DECISIONS_FILE" ]; then
+  rm -f "$DECISIONS_FILE"
+  echo "${PROMPT_COLOR}--fresh: cleared stored decisions${RESET}"
+fi
+
+skip_msg() {
+  printf '%s%s%s\n' "$SKIP_COLOR" "$*" "$RESET"
+}
+
+was_declined() {
+  [ -f "$DECISIONS_FILE" ] && grep -qx "$1" "$DECISIONS_FILE"
+}
+
+record_decline() {
+  was_declined "$1" && return
+  echo "$1" >> "$DECISIONS_FILE"
+}
 
 link() {
   local src="$1" dst="$2"
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
-    echo "$dst already linked, skipping"
+    skip_msg "$dst already linked"
     return
   elif [ -L "$dst" ]; then
     rm "$dst"
@@ -32,7 +63,7 @@ link() {
 link_shell() {
   local src="$1" dst="$2" local="$3"
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
-    echo "$dst already linked, skipping"
+    skip_msg "$dst already linked"
     return
   elif [ -L "$dst" ]; then
     rm "$dst"
@@ -71,9 +102,11 @@ else
 fi
 
 if [ "$_autoupdate_configured" = true ]; then
-  echo "Auto-update already configured, skipping"
+  skip_msg "Auto-update already configured"
+elif was_declined auto-update; then
+  skip_msg "Auto-update already declined"
 else
-  read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _autoupdate_answer
+  read -rp "${PROMPT_COLOR}Enable automatic dotfiles update on shell startup? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _autoupdate_answer
   if [[ "$_autoupdate_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Enabling auto-update...${RESET}"
     for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
@@ -83,7 +116,8 @@ else
     done
     echo "Auto-update enabled (DOTFILES_AUTO_UPDATE=1 in local rc files)"
   else
-    echo "${NO_COLOR}(Selected N) Skipping auto-update${RESET}"
+    record_decline auto-update
+    skip_msg "Auto-update already declined"
   fi
   unset _autoupdate_answer
 fi
@@ -106,7 +140,7 @@ mkdir -p "$HOME/.claude"
 if [ ! -e "$HOME/.claude/settings.local.json" ]; then
   link "$DOTFILES/claude-global/settings.local.json" "$HOME/.claude/settings.local.json"
 else
-  echo "$HOME/.claude/settings.local.json already exists, skipping"
+  skip_msg "$HOME/.claude/settings.local.json already exists"
 fi
 
 # tmux
@@ -133,18 +167,21 @@ link "$DOTFILES/ghostty/config" "$HOME/.config/ghostty/config"
 # keychain (SSH agent management)
 _install_keychain=true
 if [ -x "$HOME/.local/bin/keychain" ]; then
-  echo "keychain already installed (~/.local/bin/keychain), skipping"
+  skip_msg "keychain already installed (~/.local/bin/keychain)"
   _install_keychain=false
 elif [ -S "$HOME/.1password/agent.sock" ]; then
-  echo "keychain skipped: 1Password SSH agent detected"
+  skip_msg "keychain not needed (1Password SSH agent detected)"
   _install_keychain=false
 elif [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null; then
-  echo "keychain skipped: existing SSH agent with loaded keys detected"
+  skip_msg "keychain not needed (existing SSH agent with loaded keys detected)"
+  _install_keychain=false
+elif was_declined keychain; then
+  skip_msg "keychain already declined"
   _install_keychain=false
 fi
 
 if [ "$_install_keychain" = true ]; then
-  read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _kc_answer
+  read -rp "${PROMPT_COLOR}Install keychain for SSH agent management? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _kc_answer
   if [[ "$_kc_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Installing keychain...${RESET}"
     mkdir -p "$HOME/.local/bin"
@@ -153,16 +190,19 @@ if [ "$_install_keychain" = true ]; then
     chmod +x "$HOME/.local/bin/keychain"
     echo "Installed keychain to ~/.local/bin/keychain"
   else
-    echo "${NO_COLOR}(Selected N) Skipping keychain${RESET}"
+    record_decline keychain
+    skip_msg "keychain already declined"
   fi
 fi
 unset _install_keychain _kc_answer
 
 # Rust / Cargo
 if command -v cargo &>/dev/null; then
-  echo "cargo already installed, skipping"
+  skip_msg "cargo already installed"
+elif was_declined rust; then
+  skip_msg "Rust already declined"
 else
-  read -rp "${PROMPT_COLOR}Install Rust and Cargo? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _rust_answer
+  read -rp "${PROMPT_COLOR}Install Rust and Cargo? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _rust_answer
   if [[ "$_rust_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Installing Rust...${RESET}"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -170,16 +210,19 @@ else
     source "$HOME/.cargo/env"
     echo "Installed Rust and Cargo"
   else
-    echo "${NO_COLOR}(Selected N) Skipping Rust${RESET}"
+    record_decline rust
+    skip_msg "Rust already declined"
   fi
   unset _rust_answer
 fi
 
 # Go
 if command -v go &>/dev/null; then
-  echo "go already installed, skipping"
+  skip_msg "go already installed"
+elif was_declined go; then
+  skip_msg "Go already declined"
 else
-  read -rp "${PROMPT_COLOR}Install Go? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _go_answer
+  read -rp "${PROMPT_COLOR}Install Go? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _go_answer
   if [[ "$_go_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Installing Go...${RESET}"
     _go_version="1.24.1"
@@ -199,31 +242,37 @@ else
     echo "Installed Go $(go version)"
     unset _go_version _go_arch _go_os _go_tarball
   else
-    echo "${NO_COLOR}(Selected N) Skipping Go${RESET}"
+    record_decline go
+    skip_msg "Go already declined"
   fi
   unset _go_answer
 fi
 
 # zoxide
 if command -v zoxide &>/dev/null; then
-  echo "zoxide already installed, skipping"
+  skip_msg "zoxide already installed"
+elif was_declined zoxide; then
+  skip_msg "zoxide already declined"
 else
-  read -rp "${PROMPT_COLOR}Install zoxide (smarter cd)? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _zoxide_answer
+  read -rp "${PROMPT_COLOR}Install zoxide (smarter cd)? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _zoxide_answer
   if [[ "$_zoxide_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Installing zoxide...${RESET}"
     curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
     echo "Installed zoxide"
   else
-    echo "${NO_COLOR}(Selected N) Skipping zoxide${RESET}"
+    record_decline zoxide
+    skip_msg "zoxide already declined"
   fi
   unset _zoxide_answer
 fi
 
 # atuin
 if command -v atuin &>/dev/null; then
-  echo "atuin already installed, skipping"
+  skip_msg "atuin already installed"
+elif was_declined atuin-install; then
+  skip_msg "atuin already declined"
 else
-  read -rp "${PROMPT_COLOR}Install atuin (shell history sync)? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _atuin_install_answer
+  read -rp "${PROMPT_COLOR}Install atuin (shell history sync)? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _atuin_install_answer
   if [[ "$_atuin_install_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Installing atuin...${RESET}"
     if ! curl --proto '=https' --tlsv1.2 -LsSf https://setup.atuin.sh | sh; then
@@ -235,13 +284,18 @@ else
       fi
     fi
   else
-    echo "${NO_COLOR}(Selected N) Skipping atuin${RESET}"
+    record_decline atuin-install
+    skip_msg "atuin already declined"
   fi
   unset _atuin_install_answer
 fi
 
-if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
-  read -rp "${PROMPT_COLOR}Log in to Atuin sync? [y/${N_COLOR}N${PROMPT_COLOR}]${RESET} " _atuin_answer
+if [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
+  skip_msg "atuin already logged in"
+elif was_declined atuin-login; then
+  skip_msg "Atuin login already declined"
+else
+  read -rp "${PROMPT_COLOR}Log in to Atuin sync? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _atuin_answer
   if [[ "$_atuin_answer" =~ ^[Yy]$ ]]; then
     echo "${YES_COLOR}(Selected y) Logging in to Atuin...${RESET}"
     read -rp "${PROMPT_COLOR}Atuin username:${RESET} " ATUIN_USERNAME
@@ -257,11 +311,10 @@ if [ ! -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ]; then
     atuin sync
     echo "Atuin login and sync complete"
   else
-    echo "${NO_COLOR}(Selected N) Skipping Atuin login${RESET}"
+    record_decline atuin-login
+    skip_msg "Atuin login already declined"
   fi
   unset _atuin_answer
-else
-  echo "atuin already logged in, skipping"
 fi
 
 # Seed migration tracker if missing, then run any pending migrations

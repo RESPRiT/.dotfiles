@@ -7,9 +7,9 @@ eval "$(zoxide init bash)"
 
 # Prompt: user@machine in light blue, current dir, with $/#
 if [[ -n "$SSH_CONNECTION" ]]; then
-  PS1='\[\e[38;5;114m\]\u@\h\[\e[0m\] \w \$ '
+  PS1='\[\e[38;5;114m\]\u@\h\[\e[0m\] \w$(_git_branch_info) \$ '
 else
-  PS1='\[\e[38;5;117m\]\u@\h\[\e[0m\] \w \$ '
+  PS1='\[\e[38;5;117m\]\u@\h\[\e[0m\] \w$(_git_branch_info) \$ '
 fi
 
 # History

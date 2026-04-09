@@ -8,21 +8,6 @@ eval "$(zoxide init zsh)"
 # Prompt: user@machine in light blue, current dir only, with %
 setopt PROMPT_SUBST
 
-_git_branch_info() {
-  local branch dirty=""
-  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
-  git diff --quiet 2>/dev/null || dirty="*"
-  local color
-  if [[ -n "$dirty" ]]; then
-    color="210"
-  elif [[ "$branch" == "main" || "$branch" == "master" ]]; then
-    color="218"
-  else
-    color="green"
-  fi
-  printf ' %%F{%s}(%s%s)%%f' "$color" "$dirty" "$branch"
-}
-
 if [[ -n "$SSH_CONNECTION" ]]; then
   PROMPT='%F{114}%n@%m%f %2~$(_git_branch_info) %# '
 else

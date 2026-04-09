@@ -131,6 +131,27 @@ extract() {
   esac
 }
 
+# Git prompt info (used by both zsh PROMPT and bash PS1)
+_git_branch_info() {
+  local branch dirty=""
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
+  git diff --quiet 2>/dev/null || dirty="*"
+  [ -z "$dirty" ] && [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ] && dirty="*"
+  local color_code
+  if [ -n "$dirty" ]; then
+    color_code="210"
+  elif [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+    color_code="218"
+  else
+    color_code="2"
+  fi
+  if [ -n "$ZSH_VERSION" ]; then
+    printf ' %%F{%s}(%s%s)%%f' "$color_code" "$dirty" "$branch"
+  else
+    printf ' \001\033[38;5;%sm\002(%s%s)\001\033[0m\002' "$color_code" "$dirty" "$branch"
+  fi
+}
+
 # Claude
 path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
@@ -154,7 +175,20 @@ claude() {
     # only propagates vars in `update-environment` from the calling shell into
     # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
     # be dropped whenever the wrapper attaches to an already-running server.
-    tmux new-session -s "claude-$$" -e CLAUDE_CODE_TMUX_TRUECOLOR=1 "$cmd" \; set status off \; set destroy-unattached on
+    tmux new-session -s "claude-$$" -e CLAUDE_CODE_TMUX_TRUECOLOR=1 "$cmd" \
+      \; set status off \; set destroy-unattached on
+    # Claude's farewell text (resume hint, cost summary) is lost when the
+    # tmux session is destroyed. Read the session ID from Claude's own
+    # state files and print a resume hint to the outer terminal.
+    local latest
+    latest=$(ls -t "$HOME/.claude/sessions"/*.json 2>/dev/null | head -1)
+    if [ -n "$latest" ]; then
+      local sid
+      sid=$(grep -o '"sessionId":"[^"]*"' "$latest" | head -1)
+      sid=${sid#'"sessionId":"'}
+      sid=${sid%'"'}
+      [ -n "$sid" ] && printf '\nTo resume this session: claude --resume %s\n' "$sid"
+    fi
   fi
 }
 

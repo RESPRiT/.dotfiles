@@ -171,24 +171,36 @@ claude() {
     claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
     local cmd="$claude_bin"
     [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
+    # Claude's farewell text (resume hint, cost summary) is lost when
+    # the tmux session is destroyed. A SessionEnd hook in settings.json
+    # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
+    # ID from it after tmux returns.
+    local exit_capture
+    exit_capture=$(mktemp -t claude-exit) || return 1
     # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
     # only propagates vars in `update-environment` from the calling shell into
     # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
     # be dropped whenever the wrapper attaches to an already-running server.
-    tmux new-session -s "claude-$$" -e CLAUDE_CODE_TMUX_TRUECOLOR=1 "$cmd" \
+    tmux new-session -s "claude-$$" \
+      -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \
+      -e CLAUDE_EXIT_FILE="$exit_capture" \
+      "$cmd" \
       \; set status off \; set destroy-unattached on
-    # Claude's farewell text (resume hint, cost summary) is lost when the
-    # tmux session is destroyed. Read the session ID from Claude's own
-    # state files and print a resume hint to the outer terminal.
-    local latest
-    latest=$(ls -t "$HOME/.claude/sessions"/*.json 2>/dev/null | head -1)
-    if [ -n "$latest" ]; then
+    if [ -s "$exit_capture" ]; then
       local sid
-      sid=$(grep -o '"sessionId":"[^"]*"' "$latest" | head -1)
-      sid=${sid#'"sessionId":"'}
+      sid=$(grep -o '"session_id":"[^"]*"' "$exit_capture" | head -1)
+      sid=${sid#'"session_id":"'}
       sid=${sid%'"'}
-      [ -n "$sid" ] && printf '\nTo resume this session: claude --resume %s\n' "$sid"
+      # Only show the hint if the session had real content (not a blank exit).
+      if [ -n "$sid" ]; then
+        local jsonl
+        jsonl=$(ls "$HOME/.claude/projects"/*/"$sid.jsonl" 2>/dev/null | head -1)
+        if [ -n "$jsonl" ] && [ "$(wc -l < "$jsonl")" -gt 1 ]; then
+          printf '\n\033[90mResume this session with:\n  claude --resume %s\n\033[0m' "$sid"
+        fi
+      fi
     fi
+    rm -f "$exit_capture"
   fi
 }
 

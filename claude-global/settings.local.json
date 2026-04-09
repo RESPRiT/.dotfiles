@@ -12,5 +12,18 @@
       "Bash(brew list:*)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'test -n \"$CLAUDE_EXIT_FILE\" && cat > \"$CLAUDE_EXIT_FILE\"'"
+          }
+        ]
+      }
+    ]
   }
 }

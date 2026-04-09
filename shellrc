@@ -125,7 +125,11 @@ claude() {
     claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
     local cmd="$claude_bin"
     [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
-    tmux new-session -s "claude-$$" "$cmd" \; set status off \; set destroy-unattached on
+    # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
+    # only propagates vars in `update-environment` from the calling shell into
+    # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
+    # be dropped whenever the wrapper attaches to an already-running server.
+    tmux new-session -s "claude-$$" -e CLAUDE_CODE_TMUX_TRUECOLOR=1 "$cmd" \; set status off \; set destroy-unattached on
   fi
 }
 

@@ -1,4 +1,4 @@
-config-file = ?/Users/harrison/.config/ghostty/config.local
+config-file = ?~/.config/ghostty/config.local
 
 font-size = 14
 cursor-style = block

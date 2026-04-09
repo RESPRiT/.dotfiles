@@ -41,9 +41,10 @@ command -v atuin &>/dev/null && eval "$(atuin init bash)"
 if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
   (_dotfiles_update &)
   _dotfiles_show_update() {
-    if [ -f "$_dotfiles_update_msg" ]; then
-      cat "$_dotfiles_update_msg"
-      rm -f "$_dotfiles_update_msg"
+    local msg="$HOME/.dotfiles/.update-msg"
+    if [ -f "$msg" ]; then
+      cat "$msg"
+      rm -f "$msg"
       PROMPT_COMMAND="${PROMPT_COMMAND/_dotfiles_show_update;/}"
       unset -f _dotfiles_show_update
     fi
@@ -51,4 +52,3 @@ if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
   PROMPT_COMMAND="_dotfiles_show_update;${PROMPT_COMMAND:+$PROMPT_COMMAND}"
 fi
 unset -f _dotfiles_update
-unset _dotfiles_update_msg

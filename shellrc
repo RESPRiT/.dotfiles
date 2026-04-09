@@ -11,17 +11,30 @@ if [ -x "$HOME/.local/bin/keychain" ]; then
   eval "$("$HOME/.local/bin/keychain" --eval id_ed25519)"
 fi
 
+# Resolve where the dotfiles repo lives by following the ~/.shellrc symlink.
+# install.sh always symlinks ~/.shellrc to <repo>/shellrc (with an absolute
+# target), so the parent of the link target is the repo root. Falls back to
+# ~/.dotfiles if ~/.shellrc isn't a symlink (e.g., copied rather than linked).
+if [ -L "$HOME/.shellrc" ]; then
+  _dotfiles_dir=$(cd "$HOME" 2>/dev/null && cd "$(dirname "$(readlink "$HOME/.shellrc")")" 2>/dev/null && pwd)
+fi
+: "${_dotfiles_dir:=$HOME/.dotfiles}"
+
 # Auto-update dotfiles (set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local or ~/.bashrc.local)
-_dotfiles_update_msg="$HOME/.dotfiles/.update-msg"
 _dotfiles_update() {
-  local dotfiles="$HOME/.dotfiles"
+  local dotfiles="$_dotfiles_dir"
   local backup="$dotfiles/backup"
+  local msg="$dotfiles/.update-msg"
 
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" fetch --quiet 2>/dev/null || return
 
   local changed
   changed=$(git -C "$dotfiles" diff --name-only HEAD..@{u} 2>/dev/null)
   [ -z "$changed" ] && return
+
+  local commit_count plural=""
+  commit_count=$(git -C "$dotfiles" rev-list --count HEAD..@{u} 2>/dev/null)
+  [ "$commit_count" != "1" ] && plural="s"
 
   local timestamp
   timestamp=$(date +%s)
@@ -40,9 +53,21 @@ _dotfiles_update() {
   done
 
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null \
-    && printf '\033[1;34m[dotfiles]\033[0m Updated from remote\n' > "$_dotfiles_update_msg"
+    && printf '\033[1;34m[dotfiles]\033[0m Updated from remote \033[38;5;240m(%s commit%s)\033[0m\n' "$commit_count" "$plural" > "$msg"
 }
 # Execution is deferred to zshrc/bashrc (after local rc sets DOTFILES_AUTO_UPDATE)
+
+# Warn if install.sh hasn't been re-run since the migration system was added.
+# Either condition means `git pull` won't trigger pending migrations.
+if [ -d "$_dotfiles_dir/.git" ] && \
+   { [ ! -L "$_dotfiles_dir/.git/hooks/post-merge" ] || [ ! -f "$HOME/.dotfiles-migrated" ]; }; then
+  _install_path="$_dotfiles_dir/install.sh"
+  case "$_install_path" in
+    "$HOME"/*) _install_path="~${_install_path#$HOME}" ;;
+  esac
+  printf '\033[1;33m[dotfiles]\033[0m You need to run install.sh again to setup migrations \033[38;5;240m(%s)\033[0m\n' "$_install_path" >&2
+  unset _install_path
+fi
 
 # COLORTERM doesn't survive SSH (sshd only accepts LANG/LC_*), but TERM does.
 # Infer truecolor from terminal-specific TERM values before falling back.

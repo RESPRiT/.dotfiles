@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# post-merge hook — runs numbered migration scripts after git pull.
+# Designed to live in the repo at hooks/post-merge and be symlinked
+# into .git/hooks/post-merge by install.sh.
+
+set -euo pipefail
+
+DOTFILES="$(git -C "$(dirname "$(readlink -f "$0")")" rev-parse --show-toplevel)"
+MIGRATIONS_DIR="$DOTFILES/migrations"
+TRACKER="$HOME/.dotfiles-migrated"
+
+# If no migrations directory, nothing to do
+[ -d "$MIGRATIONS_DIR" ] || exit 0
+
+# Only run migrations if install.sh has been run (tracker is the opt-in signal)
+[ -f "$TRACKER" ] || exit 0
+
+last_applied=$(cat "$TRACKER")
+
+# Find and run pending migrations in order
+for script in "$MIGRATIONS_DIR"/[0-9][0-9][0-9]-*.sh; do
+  [ -f "$script" ] || continue
+  num=$(basename "$script" | grep -oE '^[0-9]+')
+  # Strip leading zeros for arithmetic comparison
+  num=$((10#$num))
+  if [ "$num" -gt "$last_applied" ]; then
+    echo "Running migration: $(basename "$script")"
+    if bash "$script"; then
+      echo "$num" > "$TRACKER"
+    else
+      echo "Migration failed: $(basename "$script")" >&2
+      exit 1
+    fi
+  fi
+done

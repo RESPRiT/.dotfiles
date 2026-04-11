@@ -1,31 +1,18 @@
+# Shared config (early, so PATH is set before tools that depend on it)
+. ~/.shellrc
+
 # zoxide
-eval "$(zoxide init zsh)"
 export _ZO_DOCTOR=0
+eval "$(zoxide init zsh)"
 
 # Prompt: user@machine in light blue, current dir only, with %
 setopt PROMPT_SUBST
 
-_git_branch_info() {
-  local branch
-  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
-  if [[ "$branch" == "main" || "$branch" == "master" ]]; then
-    printf ' %%F{218}(%s)%%f' "$branch"
-  else
-    printf ' %%F{green}(%s)%%f' "$branch"
-  fi
-}
-
-_outbox_count() {
-  local n
-  n=$(find ~/.metacog/outbox -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
-  (( n > 0 )) && printf ' %%F{red}(%d)%%f' "$n"
-}
-
-PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info)$(_outbox_count) %# '
-
-# Suppress glob expansion for message tools
-alias inbox='noglob inbox'
-alias outbox='noglob outbox'
+if [[ -n "$SSH_CONNECTION" ]]; then
+  PROMPT='%F{114}%n@%m%f %2~$(_git_branch_info) %# '
+else
+  PROMPT='%F{117}%n@%m%f %2~$(_git_branch_info) %# '
+fi
 
 # History
 HISTFILE=~/.zsh_history
@@ -54,15 +41,25 @@ setopt COMPLETE_ALIASES
 # Shift-tab to cycle backwards
 bindkey -M menuselect '^[[Z' reverse-menu-complete
 
-# Shared config
-. ~/.shellrc
-
 # atuin
-. "$HOME/.atuin/bin/env"
-eval "$(atuin init zsh)"
+[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
+command -v atuin &>/dev/null && eval "$(atuin init zsh)"
 
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
 
-# bun completions
-[ -s "/Users/harrison/.bun/_bun" ] && source "/Users/harrison/.bun/_bun"
+# Auto-update dotfiles (must run after local rc sets DOTFILES_AUTO_UPDATE)
+if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
+  (_dotfiles_update &)
+  _dotfiles_show_update() {
+    local msg="$HOME/.dotfiles/.update-msg"
+    if [ -f "$msg" ]; then
+      cat "$msg"
+      rm -f "$msg"
+      precmd_functions=(${precmd_functions:#_dotfiles_show_update})
+      unset -f _dotfiles_show_update
+    fi
+  }
+  precmd_functions+=(_dotfiles_show_update)
+fi
+unset -f _dotfiles_update

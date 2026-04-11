@@ -1,12 +1,30 @@
+# Prepend to PATH only if not already present (avoids stacking on reload)
+path_prepend() {
+  case ":$PATH:" in
+    *:"$1":*) ;;
+    *) export PATH="$1:$PATH" ;;
+  esac
+}
+
 # SSH agent (keychain) — use per-user binary to avoid clashing with 1Password etc.
 if [ -x "$HOME/.local/bin/keychain" ]; then
   eval "$("$HOME/.local/bin/keychain" --eval id_ed25519)"
 fi
 
+# Resolve where the dotfiles repo lives by following the ~/.shellrc symlink.
+# install.sh always symlinks ~/.shellrc to <repo>/shellrc (with an absolute
+# target), so the parent of the link target is the repo root. Falls back to
+# ~/.dotfiles if ~/.shellrc isn't a symlink (e.g., copied rather than linked).
+if [ -L "$HOME/.shellrc" ]; then
+  _dotfiles_dir=$(cd "$HOME" 2>/dev/null && cd "$(dirname "$(readlink "$HOME/.shellrc")")" 2>/dev/null && pwd)
+fi
+: "${_dotfiles_dir:=$HOME/.dotfiles}"
+
 # Auto-update dotfiles (set DOTFILES_AUTO_UPDATE=1 in ~/.zshrc.local or ~/.bashrc.local)
 _dotfiles_update() {
-  local dotfiles="$HOME/.dotfiles"
+  local dotfiles="$_dotfiles_dir"
   local backup="$dotfiles/backup"
+  local msg="$dotfiles/.update-msg"
 
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" fetch --quiet 2>/dev/null || return
 
@@ -14,16 +32,19 @@ _dotfiles_update() {
   changed=$(git -C "$dotfiles" diff --name-only HEAD..@{u} 2>/dev/null)
   [ -z "$changed" ] && return
 
+  local commit_count plural=""
+  commit_count=$(git -C "$dotfiles" rev-list --count HEAD..@{u} 2>/dev/null)
+  [ "$commit_count" != "1" ] && plural="s"
+
   local timestamp
   timestamp=$(date +%s)
   mkdir -p "$backup"
 
   printf '%s\n' "$changed" | while IFS= read -r f; do
     [ -f "$dotfiles/$f" ] || continue
-    bname="${f//\//_}"
+    local bname="${f//\//_}"
     cp "$dotfiles/$f" "$backup/${bname}.${timestamp}.bak"
-    local count
-    count=$(ls "$backup/${bname}".*.bak 2>/dev/null | wc -l)
+    local count=$(ls "$backup/${bname}".*.bak 2>/dev/null | wc -l)
     if [ "$count" -gt 5 ]; then
       ls "$backup/${bname}".*.bak 2>/dev/null | sort | head -n $(( count - 5 )) | while IFS= read -r old; do
         rm -f "$old"
@@ -32,12 +53,39 @@ _dotfiles_update() {
   done
 
   GIT_TERMINAL_PROMPT=0 git -C "$dotfiles" pull --ff-only --quiet 2>/dev/null \
-    && echo "[dotfiles] Updated from remote"
+    && printf '\033[1;34m[dotfiles]\033[0m Updated from remote \033[38;5;240m(%s commit%s)\033[0m\n' "$commit_count" "$plural" > "$msg"
 }
-if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
-  (_dotfiles_update &)
+# Execution is deferred to zshrc/bashrc (after local rc sets DOTFILES_AUTO_UPDATE)
+
+# Warn if install.sh hasn't been re-run since the migration system was added.
+# Either condition means `git pull` won't trigger pending migrations.
+if [ -d "$_dotfiles_dir/.git" ] && \
+   { [ ! -L "$_dotfiles_dir/.git/hooks/post-merge" ] || [ ! -f "$HOME/.dotfiles-migrated" ]; }; then
+  _install_path="$_dotfiles_dir/install.sh"
+  case "$_install_path" in
+    "$HOME"/*) _install_path="~${_install_path#$HOME}" ;;
+  esac
+  printf '\033[1;33m[dotfiles]\033[0m You need to run install.sh again to setup migrations \033[38;5;240m(%s)\033[0m\n' "$_install_path" >&2
+  unset _install_path
 fi
-unset -f _dotfiles_update
+
+# COLORTERM doesn't survive SSH (sshd only accepts LANG/LC_*), but TERM does.
+# Infer truecolor from terminal-specific TERM values before falling back.
+if [ -z "$COLORTERM" ]; then
+  case "$TERM" in
+    xterm-ghostty|xterm-kitty|alacritty|wezterm) export COLORTERM=truecolor ;;
+    tmux-*|screen-*) export COLORTERM=truecolor ;;
+  esac
+fi
+
+# If the terminfo entry for TERM is missing, fall back to xterm-256color
+# (common over SSH when the remote lacks e.g. xterm-ghostty terminfo)
+if ! infocmp "$TERM" >/dev/null 2>&1; then
+  export TERM=xterm-256color
+fi
+
+# Claude Code downgrades to 256 colors inside tmux by default
+[ -n "$TMUX" ] && export CLAUDE_CODE_TMUX_TRUECOLOR=1
 
 # Colorized ls
 export CLICOLOR=1
@@ -83,17 +131,89 @@ extract() {
   esac
 }
 
+# Git prompt info (used by both zsh PROMPT and bash PS1)
+_git_branch_info() {
+  local branch dirty=""
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
+  git diff --quiet 2>/dev/null || dirty="*"
+  [ -z "$dirty" ] && [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ] && dirty="*"
+  local color_code
+  if [ -n "$dirty" ]; then
+    color_code="210"
+  elif [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+    color_code="218"
+  else
+    color_code="2"
+  fi
+  if [ -n "$ZSH_VERSION" ]; then
+    printf ' %%F{%s}(%s%s)%%f' "$color_code" "$dirty" "$branch"
+  else
+    printf ' \001\033[38;5;%sm\002(%s%s)\001\033[0m\002' "$color_code" "$dirty" "$branch"
+  fi
+}
+
 # Claude
-export PATH="$HOME/.local/bin:$PATH"
+path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
 
-# bun
-[ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
+# Wrap `claude` in a chrome-less tmux session when launched from a bare
+# shell so the TUI gets clean framing (no status bar, no window list).
+# Inside an existing tmux session, run claude directly — the user's
+# manual session is intentional and should keep its normal lifecycle.
+# Unique PID-suffixed session names avoid duplicate-session errors;
+# destroy-unattached on makes the session die as soon as claude exits
+# or the terminal closes, matching an unwrapped claude's lifecycle.
+claude() {
+  if [ -n "$TMUX" ]; then
+    command claude "$@"
+  else
+    local claude_bin
+    claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
+    local cmd="$claude_bin"
+    [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
+    # Claude's farewell text (resume hint, cost summary) is lost when
+    # the tmux session is destroyed. A SessionEnd hook in settings.json
+    # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
+    # ID from it after tmux returns.
+    local exit_capture
+    exit_capture=$(mktemp -t claude-exit) || return 1
+    # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
+    # only propagates vars in `update-environment` from the calling shell into
+    # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
+    # be dropped whenever the wrapper attaches to an already-running server.
+    tmux new-session -s "claude-$$" \
+      -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \
+      -e CLAUDE_EXIT_FILE="$exit_capture" \
+      "$cmd" \
+      \; set status off \; set destroy-unattached on
+    if [ -s "$exit_capture" ]; then
+      local sid
+      sid=$(grep -o '"session_id":"[^"]*"' "$exit_capture" | head -1)
+      sid=${sid#'"session_id":"'}
+      sid=${sid%'"'}
+      # Only show the hint if the session had real content (not a blank exit).
+      if [ -n "$sid" ]; then
+        local jsonl
+        jsonl=$(ls "$HOME/.claude/projects"/*/"$sid.jsonl" 2>/dev/null | head -1)
+        if [ -n "$jsonl" ] && [ "$(wc -l < "$jsonl")" -gt 1 ]; then
+          printf '\n\033[90mResume this session with:\n  claude --resume %s\n\033[0m' "$sid"
+        fi
+      fi
+    fi
+    rm -f "$exit_capture"
+  fi
+}
+
+# bun (completions are zsh-specific)
+[ -n "$ZSH_VERSION" ] && [ -s "$HOME/.bun/_bun" ] && . "$HOME/.bun/_bun"
 export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
+path_prepend "$BUN_INSTALL/bin"
 
 # deno
 [ -f "$HOME/.deno/env" ] && . "$HOME/.deno/env"
 
 # rust
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# go
+[ -d /usr/local/go/bin ] && path_prepend "/usr/local/go/bin"

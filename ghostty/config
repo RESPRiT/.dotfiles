@@ -1,7 +1,10 @@
+config-file = ?~/.config/ghostty/config.local
+
 font-size = 14
 cursor-style = block
 theme = Solarized Dark Higher Contrast
-shell-integration-features = no-cursor,ssh-env
+shell-integration-features = no-cursor,ssh-env,ssh-terminfo
 background-opacity = 0.9
+auto-update-channel = tip
 
 keybind = super+f=start_search

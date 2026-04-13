@@ -6,10 +6,26 @@ path_prepend() {
   esac
 }
 
-# SSH agent (keychain) — use per-user binary to avoid clashing with 1Password etc.
+# SSH agent (keychain) — prefer per-user binary (~/.local/bin/keychain, installed
+# by install.sh) but fall back to system-wide keychain if available.
+# Load the standard key plus the signing key (used for git commit signing).
+# Per-host keys (e.g. alt/id_ed25519_alt) belong in ~/.shellrc.local.
+_keychain_bin=""
 if [ -x "$HOME/.local/bin/keychain" ]; then
-  eval "$("$HOME/.local/bin/keychain" --eval id_ed25519)"
+  _keychain_bin="$HOME/.local/bin/keychain"
+elif command -v keychain >/dev/null 2>&1; then
+  _keychain_bin="keychain"
 fi
+if [ -n "$_keychain_bin" ]; then
+  # Build key list via positional params (avoids zsh word-split difference).
+  set --
+  for _k in id_ed25519 id_ed25519_sign; do
+    [ -f "$HOME/.ssh/$_k" ] && set -- "$@" "$_k"
+  done
+  [ $# -gt 0 ] && eval "$("$_keychain_bin" --eval "$@")"
+  unset _k
+fi
+# _keychain_bin is cleaned up after ~/.shellrc.local (which may reuse it)
 
 # Resolve where the dotfiles repo lives by following the ~/.shellrc symlink.
 # install.sh always symlinks ~/.shellrc to <repo>/shellrc (with an absolute
@@ -176,7 +192,7 @@ claude() {
     # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
     # ID from it after tmux returns.
     local exit_capture
-    exit_capture=$(mktemp -t claude-exit) || return 1
+    exit_capture=$(mktemp "${TMPDIR:-/tmp}/claude-exit.XXXXXX") || return 1
     # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
     # only propagates vars in `update-environment` from the calling shell into
     # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
@@ -217,3 +233,9 @@ path_prepend "$BUN_INSTALL/bin"
 
 # go
 [ -d /usr/local/go/bin ] && path_prepend "/usr/local/go/bin"
+
+# Machine-local shared config (tool installs, per-host keys, PATH tweaks).
+# Sourced after everything else so overrides win. Shell-specific local config
+# goes in ~/.bashrc.local or ~/.zshrc.local instead.
+[ -f "$HOME/.shellrc.local" ] && . "$HOME/.shellrc.local"
+unset _keychain_bin

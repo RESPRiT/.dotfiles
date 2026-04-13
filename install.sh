@@ -72,8 +72,20 @@ link_shell() {
       echo "Error: $local already exists. Remove it manually before installing." >&2
       exit 1
     fi
-    mv "$dst" "$local"
-    echo "Moved existing $dst -> $local"
+    # Check if the existing file is just a distro default (e.g. /etc/skel/.bashrc).
+    # These pollute the .local override file with boilerplate that conflicts with
+    # the dotfiles config. Warn and discard rather than silently preserving.
+    local skel="/etc/skel/$(basename "$dst")"
+    if [ -f "$skel" ] && diff -q "$dst" "$skel" >/dev/null 2>&1; then
+      echo "${SKIP_COLOR}Discarding distro default $dst (identical to $skel)${RESET}"
+    else
+      mv "$dst" "$local"
+      echo "Moved existing $dst -> $local"
+      if [ -f "$skel" ]; then
+        echo "${PROMPT_COLOR}Note:${RESET} $local was created from a pre-existing $dst."
+        echo "  Review it and remove any distro defaults that conflict with the dotfiles config."
+      fi
+    fi
   fi
   ln -s "$src" "$dst"
   echo "Linked $dst -> $src"
@@ -87,6 +99,15 @@ link_shell() {
 link "$DOTFILES/shellrc" "$HOME/.shellrc"
 link_shell "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
 link_shell "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
+# bash_profile is a 1-line shim that sources ~/.bashrc so SSH/login shells
+# pick up our config. Per-host overrides flow through ~/.bashrc.local, so
+# this file doesn't need its own .local override.
+link "$DOTFILES/bash_profile" "$HOME/.bash_profile"
+# Seed ~/.shellrc.local if missing (shellrc sources it for shared per-host config)
+if [ ! -e "$HOME/.shellrc.local" ]; then
+  echo "# Machine-specific configuration shared by bash and zsh" > "$HOME/.shellrc.local"
+  echo "Created $HOME/.shellrc.local"
+fi
 
 # Auto-update dotfiles on shell startup
 _autoupdate_configured=false
@@ -169,6 +190,9 @@ _install_keychain=true
 if [ -x "$HOME/.local/bin/keychain" ]; then
   skip_msg "keychain already installed (~/.local/bin/keychain)"
   _install_keychain=false
+elif command -v keychain &>/dev/null; then
+  skip_msg "keychain already installed ($(command -v keychain))"
+  _install_keychain=false
 elif [ -S "$HOME/.1password/agent.sock" ]; then
   skip_msg "keychain not needed (1Password SSH agent detected)"
   _install_keychain=false
@@ -195,6 +219,61 @@ if [ "$_install_keychain" = true ]; then
   fi
 fi
 unset _install_keychain _kc_answer
+
+# zsh
+if command -v zsh &>/dev/null; then
+  skip_msg "zsh already installed"
+elif was_declined zsh-install; then
+  skip_msg "zsh already declined"
+else
+  read -rp "${PROMPT_COLOR}Install zsh? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _zsh_install_answer
+  if [[ "$_zsh_install_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Installing zsh...${RESET}"
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get update && sudo apt-get install -y zsh
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y zsh
+    elif command -v pacman &>/dev/null; then
+      sudo pacman -S --noconfirm zsh
+    elif command -v apk &>/dev/null; then
+      sudo apk add zsh
+    elif command -v brew &>/dev/null; then
+      brew install zsh
+    else
+      echo "No supported package manager found; install zsh manually" >&2
+    fi
+  else
+    record_decline zsh-install
+    skip_msg "zsh already declined"
+  fi
+  unset _zsh_install_answer
+fi
+
+# zsh as default shell
+_zsh_path="$(command -v zsh 2>/dev/null || true)"
+if [ -z "$_zsh_path" ]; then
+  : # zsh not installed; skip silently (the install step above already reported)
+elif [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+  skip_msg "zsh already set as default shell"
+elif was_declined zsh-default; then
+  skip_msg "zsh as default shell already declined"
+else
+  read -rp "${PROMPT_COLOR}Set zsh as default shell? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _zsh_default_answer
+  if [[ "$_zsh_default_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Setting zsh as default shell...${RESET}"
+    # chsh refuses shells that aren't listed in /etc/shells; add it if missing.
+    if [ -f /etc/shells ] && ! grep -qx "$_zsh_path" /etc/shells; then
+      echo "$_zsh_path" | sudo tee -a /etc/shells >/dev/null
+    fi
+    chsh -s "$_zsh_path"
+    echo "Default shell changed to $_zsh_path (takes effect on next login)"
+  else
+    record_decline zsh-default
+    skip_msg "zsh as default shell already declined"
+  fi
+  unset _zsh_default_answer
+fi
+unset _zsh_path
 
 # Rust / Cargo
 if command -v cargo &>/dev/null; then

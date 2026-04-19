@@ -76,7 +76,7 @@ _dotfiles_update() {
 # Warn if install.sh hasn't been re-run since the migration system was added.
 # Either condition means `git pull` won't trigger pending migrations.
 if [ -d "$_dotfiles_dir/.git" ] && \
-   { [ ! -L "$_dotfiles_dir/.git/hooks/post-merge" ] || [ ! -f "$HOME/.dotfiles-migrated" ]; }; then
+   { [ ! -L "$_dotfiles_dir/.git/hooks/post-merge" ] || [ ! -f "$_dotfiles_dir/.state/migrated" ]; }; then
   _install_path="$_dotfiles_dir/install.sh"
   case "$_install_path" in
     "$HOME"/*) _install_path="~${_install_path#$HOME}" ;;

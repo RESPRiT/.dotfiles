@@ -45,8 +45,10 @@ When in doubt, test the change in both `bash` and `zsh` before committing.
 
 Breaking changes between repo versions are handled by numbered scripts in `migrations/`. The system works as follows:
 
-- `hooks/post-merge` runs automatically after `git pull`, executing any migrations newer than `~/.dotfiles-migrated`.
-- `install.sh` seeds `~/.dotfiles-migrated` to `0` on first run, then runs all pending migrations.
+- Per-machine state lives in `.state/` (gitignored) at the repo root: `.state/migrated` (last-applied migration number) and `.state/decisions` (stored `[N]` answers for install.sh prompts).
+- `hooks/post-merge` runs automatically after `git pull`, executing any migrations newer than `.state/migrated`.
+- `install.sh` seeds `.state/migrated` to `0` on first run, then runs all pending migrations.
 - The post-merge hook exits early if no tracker exists, so cloning without running install.sh won't trigger migrations.
+- Both `install.sh` and `post-merge` will relocate legacy `~/.dotfiles-{migrated,decisions}` into `.state/` if found, so existing machines upgrade transparently.
 - Each migration script should be idempotent — check state before acting.
 - Naming convention: `NNN-description.sh` (e.g., `001-claude-global-rename.sh`).

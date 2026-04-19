@@ -8,7 +8,21 @@ set -euo pipefail
 
 DOTFILES="$(git -C "$(dirname "$(readlink -f "$0")")" rev-parse --show-toplevel)"
 MIGRATIONS_DIR="$DOTFILES/migrations"
-TRACKER="$HOME/.dotfiles-migrated"
+STATE_DIR="$DOTFILES/.state"
+TRACKER="$STATE_DIR/migrated"
+
+# Relocate legacy state files from $HOME (pre-.state/ layout). Covers the
+# auto-update path where users pull without explicitly re-running install.sh.
+mkdir -p "$STATE_DIR"
+for _old_name in migrated decisions; do
+  _old_path="$HOME/.dotfiles-$_old_name"
+  _new_path="$STATE_DIR/$_old_name"
+  if [ -f "$_old_path" ] && [ ! -f "$_new_path" ]; then
+    mv "$_old_path" "$_new_path"
+    echo "Relocated $_old_path -> $_new_path"
+  fi
+done
+unset _old_name _old_path _new_path
 
 # If no migrations directory, nothing to do
 [ -d "$MIGRATIONS_DIR" ] || exit 0

@@ -19,9 +19,26 @@ for arg in "$@"; do
   esac
 done
 
+# Per-machine state lives inside the repo at .state/ (gitignored). Keeps
+# $HOME clean and co-locates state with the code it pertains to.
+STATE_DIR="$DOTFILES/.state"
+mkdir -p "$STATE_DIR"
+
+# Relocate legacy state files from $HOME (pre-.state/ layout). Idempotent:
+# only moves when the old file exists and the new one doesn't.
+for _old_name in migrated decisions; do
+  _old_path="$HOME/.dotfiles-$_old_name"
+  _new_path="$STATE_DIR/$_old_name"
+  if [ -f "$_old_path" ] && [ ! -f "$_new_path" ]; then
+    mv "$_old_path" "$_new_path"
+    echo "Relocated $_old_path -> $_new_path"
+  fi
+done
+unset _old_name _old_path _new_path
+
 # Persist [N] answers so we don't re-ask declined prompts on every run.
 # One key per line, exact-match against was_declined. Cleared by --fresh.
-DECISIONS_FILE="$HOME/.dotfiles-decisions"
+DECISIONS_FILE="$STATE_DIR/decisions"
 
 if [ "$FRESH" = true ] && [ -f "$DECISIONS_FILE" ]; then
   rm -f "$DECISIONS_FILE"
@@ -397,8 +414,8 @@ else
 fi
 
 # Seed migration tracker if missing, then run any pending migrations
-if [ ! -f "$HOME/.dotfiles-migrated" ]; then
-  echo "0" > "$HOME/.dotfiles-migrated"
+if [ ! -f "$STATE_DIR/migrated" ]; then
+  echo "0" > "$STATE_DIR/migrated"
 fi
 "$DOTFILES/hooks/post-merge"
 

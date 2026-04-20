@@ -233,6 +233,7 @@ path_prepend "$BUN_INSTALL/bin"
 
 # go
 [ -d /usr/local/go/bin ] && path_prepend "/usr/local/go/bin"
+[ -d "$HOME/go/bin" ] && path_prepend "$HOME/go/bin"
 
 # Machine-local shared config (tool installs, per-host keys, PATH tweaks).
 # Sourced after everything else so overrides win. Shell-specific local config

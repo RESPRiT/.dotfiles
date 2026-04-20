@@ -172,52 +172,93 @@ _git_branch_info() {
 path_prepend "$HOME/.local/bin"
 export ENABLE_LSP_TOOL=1
 
-# Wrap `claude` in a chrome-less tmux session when launched from a bare
-# shell so the TUI gets clean framing (no status bar, no window list).
+# Wrap `claude` in a minimal tmux session when launched from a bare shell
+# so the TUI gets clean framing (gray status bar, no window list).
 # Inside an existing tmux session, run claude directly — the user's
 # manual session is intentional and should keep its normal lifecycle.
+# Bare `--resume`/`-r` (no session id) also runs unwrapped: the picker
+# can re-exec claude into a different project directory, which looks
+# like a clean exit to tmux and would destroy the wrapper session
+# before the resumed conversation loads.
+# `--resume <id>` stays wrapped, but we look up the session's original
+# cwd from its JSONL and cd there before launching tmux, so resuming
+# from a different directory still lands in the right place.
 # Unique PID-suffixed session names avoid duplicate-session errors;
 # destroy-unattached on makes the session die as soon as claude exits
 # or the terminal closes, matching an unwrapped claude's lifecycle.
 claude() {
   if [ -n "$TMUX" ]; then
     command claude "$@"
-  else
-    local claude_bin
-    claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
-    local cmd="$claude_bin"
-    [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
-    # Claude's farewell text (resume hint, cost summary) is lost when
-    # the tmux session is destroyed. A SessionEnd hook in settings.json
-    # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
-    # ID from it after tmux returns.
-    local exit_capture
-    exit_capture=$(mktemp "${TMPDIR:-/tmp}/claude-exit.XXXXXX") || return 1
-    # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
-    # only propagates vars in `update-environment` from the calling shell into
-    # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
-    # be dropped whenever the wrapper attaches to an already-running server.
+    return
+  fi
+
+  # Detect --resume/-r and its optional session id.
+  local _resume_mode="" _resume_id="" _expect_id=0 _arg
+  for _arg in "$@"; do
+    if [ "$_expect_id" = 1 ]; then
+      case "$_arg" in
+        -*) _resume_mode="bare" ;;
+        *)  _resume_mode="with-id"; _resume_id="$_arg" ;;
+      esac
+      break
+    fi
+    case "$_arg" in
+      --resume|-r) _expect_id=1 ;;
+    esac
+  done
+  [ "$_expect_id" = 1 ] && [ -z "$_resume_mode" ] && _resume_mode="bare"
+
+  if [ "$_resume_mode" = "bare" ]; then
+    command claude "$@"
+    return
+  fi
+
+  # Resolve the session's original cwd (best-effort; unknown id just falls
+  # through to running tmux in the caller's cwd, matching prior behavior).
+  local _sess_cwd=""
+  if [ "$_resume_mode" = "with-id" ]; then
+    local _jsonl
+    _jsonl=$(ls "$HOME/.claude/projects"/*/"$_resume_id.jsonl" 2>/dev/null | head -1)
+    if [ -n "$_jsonl" ]; then
+      _sess_cwd=$(grep -om1 '"cwd":"[^"]*"' "$_jsonl" 2>/dev/null)
+      _sess_cwd=${_sess_cwd#'"cwd":"'}
+      _sess_cwd=${_sess_cwd%'"'}
+    fi
+  fi
+
+  local claude_bin
+  claude_bin=$(unset -f claude 2>/dev/null; command -v claude) || { echo "claude: not found" >&2; return 127; }
+  local cmd="$claude_bin"
+  [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
+  # Claude's farewell text (resume hint, cost summary) is lost when
+  # the tmux session is destroyed. A SessionEnd hook in settings.json
+  # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
+  # ID from it after tmux returns.
+  local exit_capture
+  exit_capture=$(mktemp "${TMPDIR:-/tmp}/claude-exit.XXXXXX") || return 1
+  # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
+  # only propagates vars in `update-environment` from the calling shell into
+  # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
+  # be dropped whenever the wrapper attaches to an already-running server.
+  # Subshell so the pre-cd for `--resume <id>` doesn't leak to the caller.
+  (
+    [ -n "$_sess_cwd" ] && [ -d "$_sess_cwd" ] && cd "$_sess_cwd"
     tmux new-session -s "claude-$$" \
       -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \
       -e CLAUDE_EXIT_FILE="$exit_capture" \
       "$cmd" \
-      \; set status off \; set destroy-unattached on
-    if [ -s "$exit_capture" ]; then
-      local sid
-      sid=$(grep -o '"session_id":"[^"]*"' "$exit_capture" | head -1)
-      sid=${sid#'"session_id":"'}
-      sid=${sid%'"'}
-      # Only show the hint if the session had real content (not a blank exit).
-      if [ -n "$sid" ]; then
-        local jsonl
-        jsonl=$(ls "$HOME/.claude/projects"/*/"$sid.jsonl" 2>/dev/null | head -1)
-        if [ -n "$jsonl" ] && [ "$(wc -l < "$jsonl")" -gt 1 ]; then
-          printf '\n\033[90mResume this session with:\n  claude --resume %s\n\033[0m' "$sid"
-        fi
-      fi
+      \; set status-style "bg=colour238 fg=colour250" \; set destroy-unattached on
+  )
+  if [ -s "$exit_capture" ]; then
+    local sid
+    sid=$(grep -o '"session_id":"[^"]*"' "$exit_capture" | head -1)
+    sid=${sid#'"session_id":"'}
+    sid=${sid%'"'}
+    if [ -n "$sid" ]; then
+      printf '\n\033[90mResume this session with:\n  claude --resume %s\n\033[0m' "$sid"
     fi
-    rm -f "$exit_capture"
   fi
+  rm -f "$exit_capture"
 }
 
 # bun (completions are zsh-specific)

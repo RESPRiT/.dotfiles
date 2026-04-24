@@ -188,8 +188,13 @@ export ENABLE_LSP_TOOL=1
 # or the terminal closes, matching an unwrapped claude's lifecycle.
 claude() {
   if [ -n "$TMUX" ]; then
+    # @claude-running gates a tmux S-Enter → C-j remap that works around a
+    # CSI-u Shift+Enter regression in Claude Code 2.1.117+ (see tmux.conf).
+    tmux set -p @claude-running 1 2>/dev/null
     command claude "$@"
-    return
+    local rc=$?
+    tmux set -pu @claude-running 2>/dev/null
+    return $rc
   fi
 
   # Detect --resume/-r and its optional session id.
@@ -247,7 +252,8 @@ claude() {
       -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \
       -e CLAUDE_EXIT_FILE="$exit_capture" \
       "$cmd" \
-      \; set status-style "bg=colour238 fg=colour250" \; set destroy-unattached on
+      \; set status-style "bg=colour238 fg=colour250" \; set destroy-unattached on \
+      \; set @claude-running 1
   )
   if [ -s "$exit_capture" ]; then
     local sid

@@ -48,18 +48,27 @@ command -v atuin &>/dev/null && eval "$(atuin init zsh)"
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
 
-# Auto-update dotfiles (must run after local rc sets DOTFILES_AUTO_UPDATE)
+# Auto-update repos (must run after local rc sets the *_AUTO_UPDATE flags)
+_repo_updates_pending=0
 if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
-  (_dotfiles_update &)
-  _dotfiles_show_update() {
-    local msg="$HOME/.dotfiles/.update-msg"
-    if [ -f "$msg" ]; then
-      cat "$msg"
-      rm -f "$msg"
-      precmd_functions=(${precmd_functions:#_dotfiles_show_update})
-      unset -f _dotfiles_show_update
-    fi
-  }
-  precmd_functions+=(_dotfiles_show_update)
+  (_repo_auto_update dotfiles "$HOME/.dotfiles" &)
+  _repo_updates_pending=1
 fi
-unset -f _dotfiles_update
+if [ -d "$HOME/.docs/.git" ] && [ "$DOCS_AUTO_UPDATE" = "1" ]; then
+  (_repo_auto_update docs "$HOME/.docs" &)
+  _repo_updates_pending=1
+fi
+if [ "$_repo_updates_pending" = 1 ]; then
+  _repo_show_updates() {
+    local msg
+    for msg in "$HOME/.dotfiles/.update-msg" "$HOME/.docs/.update-msg"; do
+      if [ -f "$msg" ]; then
+        cat "$msg"
+        rm -f "$msg"
+      fi
+    done
+  }
+  precmd_functions+=(_repo_show_updates)
+fi
+unset _repo_updates_pending
+unset -f _repo_auto_update

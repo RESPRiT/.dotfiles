@@ -161,6 +161,67 @@ else
 fi
 unset _autoupdate_configured _local_rc
 
+# .docs companion repo (notes/docs, cloned to ~/.docs)
+_docs_repo="$HOME/.docs"
+_docs_url="git@github.com:RESPRiT/.docs.git"
+if [ -d "$_docs_repo/.git" ]; then
+  skip_msg ".docs already cloned at $_docs_repo"
+elif [ -e "$_docs_repo" ]; then
+  skip_msg "$_docs_repo exists but is not a git repo; skipping clone"
+elif was_declined docs-clone; then
+  skip_msg ".docs clone already declined"
+else
+  read -rp "${PROMPT_COLOR}Clone .docs into $_docs_repo? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _docs_clone_answer
+  if [[ "$_docs_clone_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Cloning .docs...${RESET}"
+    if ! git clone "$_docs_url" "$_docs_repo"; then
+      echo "Failed to clone .docs (check SSH access); continuing" >&2
+    fi
+  else
+    record_decline docs-clone
+    skip_msg ".docs clone already declined"
+  fi
+  unset _docs_clone_answer
+fi
+
+# Auto-update .docs on shell startup (only if cloned)
+if [ -d "$_docs_repo/.git" ]; then
+  _docs_autoupdate_configured=false
+  if [ -n "$DOCS_AUTO_UPDATE" ]; then
+    _docs_autoupdate_configured=true
+  else
+    for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+      if [ -f "$_local_rc" ] && grep -q 'DOCS_AUTO_UPDATE' "$_local_rc"; then
+        _docs_autoupdate_configured=true
+        break
+      fi
+    done
+  fi
+
+  if [ "$_docs_autoupdate_configured" = true ]; then
+    skip_msg ".docs auto-update already configured"
+  elif was_declined docs-auto-update; then
+    skip_msg ".docs auto-update already declined"
+  else
+    read -rp "${PROMPT_COLOR}Enable automatic .docs update on shell startup? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _docs_autoupdate_answer
+    if [[ "$_docs_autoupdate_answer" =~ ^[Yy]$ ]]; then
+      echo "${YES_COLOR}(Selected y) Enabling .docs auto-update...${RESET}"
+      for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+        if [ -f "$_local_rc" ] && ! grep -q 'DOCS_AUTO_UPDATE' "$_local_rc"; then
+          printf '\nexport DOCS_AUTO_UPDATE=1\n' >> "$_local_rc"
+        fi
+      done
+      echo ".docs auto-update enabled (DOCS_AUTO_UPDATE=1 in local rc files)"
+    else
+      record_decline docs-auto-update
+      skip_msg ".docs auto-update already declined"
+    fi
+    unset _docs_autoupdate_answer
+  fi
+  unset _docs_autoupdate_configured _local_rc
+fi
+unset _docs_repo _docs_url
+
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"
 mkdir -p "$HOME/.vim/pack/plugins/start"

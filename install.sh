@@ -181,7 +181,75 @@ else
   skip_msg "$HOME/.claude/settings.local.json already exists"
 fi
 
-# tmux
+# tmux 3.5+ — needed for `extended-keys-format csi-u` (tmux.conf:42).
+# Ubuntu 24.04 and similar LTS distros still ship 3.4, so build from source
+# when the package manager can't satisfy the version requirement.
+_tmux_min_major=3
+_tmux_min_minor=5
+_tmux_needs_install=true
+_tmux_current=""
+if command -v tmux &>/dev/null; then
+  _tmux_current="$(tmux -V | awk '{print $2}')"
+  _tmux_major="${_tmux_current%%.*}"
+  _tmux_minor_raw="${_tmux_current#*.}"
+  _tmux_minor="${_tmux_minor_raw%%[!0-9]*}"
+  if [ "$_tmux_major" -gt "$_tmux_min_major" ] \
+    || { [ "$_tmux_major" -eq "$_tmux_min_major" ] && [ "$_tmux_minor" -ge "$_tmux_min_minor" ]; }; then
+    _tmux_needs_install=false
+  fi
+fi
+
+if [ "$_tmux_needs_install" = false ]; then
+  skip_msg "tmux $_tmux_current already meets minimum (${_tmux_min_major}.${_tmux_min_minor}+)"
+elif was_declined tmux-upgrade; then
+  skip_msg "tmux upgrade already declined"
+else
+  if [ -n "$_tmux_current" ]; then
+    _tmux_prompt="Upgrade tmux to ${_tmux_min_major}.${_tmux_min_minor}+ (currently $_tmux_current)?"
+  else
+    _tmux_prompt="Install tmux ${_tmux_min_major}.${_tmux_min_minor}+?"
+  fi
+  read -rp "${PROMPT_COLOR}${_tmux_prompt} y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _tmux_answer
+  if [[ "$_tmux_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Installing tmux...${RESET}"
+    if command -v brew &>/dev/null; then
+      brew install tmux
+    else
+      _tmux_src_version="3.5a"
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y build-essential libevent-dev libncurses-dev bison pkg-config
+      elif command -v dnf &>/dev/null; then
+        sudo dnf install -y gcc make libevent-devel ncurses-devel bison pkgconf-pkg-config
+      elif command -v pacman &>/dev/null; then
+        sudo pacman -S --needed --noconfirm base-devel libevent ncurses bison
+      elif command -v apk &>/dev/null; then
+        sudo apk add build-base libevent-dev ncurses-dev bison pkgconf
+      else
+        echo "No supported package manager found; install build deps manually" >&2
+        exit 1
+      fi
+      _tmux_build="$(mktemp -d)"
+      _tmux_tarball="tmux-${_tmux_src_version}.tar.gz"
+      curl -fsSL "https://github.com/tmux/tmux/releases/download/${_tmux_src_version}/${_tmux_tarball}" \
+        -o "${_tmux_build}/${_tmux_tarball}"
+      tar -C "$_tmux_build" -xzf "${_tmux_build}/${_tmux_tarball}"
+      (cd "${_tmux_build}/tmux-${_tmux_src_version}" && ./configure && make)
+      sudo make -C "${_tmux_build}/tmux-${_tmux_src_version}" install
+      rm -rf "$_tmux_build"
+      unset _tmux_src_version _tmux_tarball _tmux_build
+    fi
+    hash -r 2>/dev/null || true
+    echo "Installed tmux $(tmux -V)"
+  else
+    record_decline tmux-upgrade
+    skip_msg "tmux upgrade already declined"
+  fi
+  unset _tmux_answer _tmux_prompt
+fi
+unset _tmux_needs_install _tmux_current _tmux_major _tmux_minor _tmux_minor_raw _tmux_min_major _tmux_min_minor
+
+# tmux config
 link_shell "$DOTFILES/tmux.conf" "$HOME/.tmux.conf" "$HOME/.tmux.local.conf"
 
 # tmux plugins (TPM)

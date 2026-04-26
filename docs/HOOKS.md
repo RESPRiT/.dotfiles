@@ -11,7 +11,7 @@ tracks:
 
 # Claude Code hooks
 
-Claude Code hooks are declared in `claude-global/settings.json` (the canonical base) and merged into `~/.claude/settings.json` at install/post-merge time by `claude-global/merge-settings.sh`. Per-machine hook overrides go in `~/.claude/settings.local.json` — object arrays concat under the merge rules, so an overlay can add hooks without replacing the base list. See CLAUDE.md *Local override pattern* → "Claude Code settings (special case)" for the full merge semantics.
+Claude Code hooks are declared in `claude-global/settings.json` (the canonical base) and merged into `~/.claude/settings.json` by `claude-global/merge-settings.sh`, which runs at install time, on `git pull` (via `hooks/post-merge`), and in-session whenever the base or overlay is edited (via `claude-global/hooks/remerge-on-settings-edit.sh`). Per-machine hook overrides go in `~/.claude/settings.local.json` — object arrays concat under the merge rules, so an overlay can add hooks without replacing the base list. See CLAUDE.md *Local override pattern* → "Claude Code settings (special case)" for the full merge semantics, including the drift-logging behavior for out-of-band edits to dest.
 
 ## Resume-hint plumbing
 

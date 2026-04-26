@@ -32,6 +32,14 @@ Examples in the repo:
 
 When adding a new config file to the repo, prefer this pattern over the plain `link` helper unless there's a specific reason not to (e.g., the file format has no include/source mechanism). On the PowerShell side, `Link-Shell` in `install.ps1` is the equivalent of bash's `link_shell`.
 
+**Shell rc files (special case):** `~/.bashrc`, `~/.zshrc`, and `~/.bash_profile` are *not* symlinks. Third-party installers (nvm, conda, fzf, rustup, …) commonly do `>> ~/.bashrc` to add their setup; if those files were symlinks, the appends would mutate the dotfiles repo. Instead `install.sh`'s `install_wrapper` writes a real file containing one line — `. "<repo>/bashrc"` — and the corresponding `.local` file (still hand-curated) is sourced from the committed base near its end. Layering becomes:
+
+- **Base** (`bashrc`/`zshrc` in the repo): canonical, never written to by anything outside the repo.
+- **Local** (`~/.bashrc.local` / `~/.zshrc.local`): hand-curated machine overrides, sourced from the base.
+- **Wrapper** (`~/.bashrc` / `~/.zshrc`): real file, sources the base, and is where third-party installer appends pile up.
+
+Load order: base → local → app appends. When `install.sh`/migration `004` finds an existing wrapper (any line referencing the base path), it leaves the file alone so app appends below the source line are preserved. `~/.bash_profile` follows the same wrapper rule (sources `~/.bashrc`); the dotfiles repo no longer carries a `bash_profile` file because the wrapper inlines the one-line content.
+
 **Claude Code settings (special case):** Claude Code has no `include` directive and no user-scope `.local.json` overlay (only project-scope), so the symlink-plus-source pattern doesn't work. Instead, `~/.claude/settings.json` is **generated** at install time by `claude-global/merge-settings.sh`, which deep-merges:
 
 - `claude-global/settings.json` — committed base, shared across machines

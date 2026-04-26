@@ -205,14 +205,96 @@ link_shell() {
   fi
 }
 
-# Shell
+# Like link_shell but installs $dst as a *real wrapper file* that sources
+# $base. Used for ~/.bashrc and ~/.zshrc because third-party installers
+# (nvm, conda, fzf, rustup, …) commonly do `>> ~/.bashrc`; with a symlink,
+# those appends mutate the dotfiles repo. With a wrapper file the appends
+# pile up below the source line and the repo file stays pristine. Hand-
+# curated overrides still go in $local_file (sourced from $base near its
+# end). Load order: base -> local -> app appends in wrapper.
+install_wrapper() {
+  local base="$1" dst="$2" local_file="$3"
+
+  # Already a wrapper (any line referencing $base): keep it untouched so any
+  # third-party appends below the source line are preserved.
+  if [ -f "$dst" ] && [ ! -L "$dst" ] && grep -qF "$base" "$dst"; then
+    skip_msg "$dst already wraps the dotfiles base"
+    if [ ! -e "$local_file" ]; then
+      echo "# Machine-specific configuration for this host" > "$local_file"
+      echo "Created $local_file"
+    fi
+    return
+  fi
+
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  elif [ -e "$dst" ]; then
+    if [ -e "$local_file" ]; then
+      echo "Error: $local_file already exists. Remove it manually before installing." >&2
+      exit 1
+    fi
+    local skel="/etc/skel/$(basename "$dst")"
+    if [ -f "$skel" ] && diff -q "$dst" "$skel" >/dev/null 2>&1; then
+      echo "${SKIP_COLOR}Discarding distro default $dst (identical to $skel)${RESET}"
+    else
+      mv "$dst" "$local_file"
+      echo "Moved existing $dst -> $local_file"
+    fi
+  fi
+
+  cat > "$dst" <<EOF
+# Wrapper installed by dotfiles install.sh.
+# Real file (not symlink) so third-party installers (nvm, conda, fzf, rustup, …)
+# can append below without mutating the dotfiles repo. Hand-curated overrides
+# go in $(basename "$local_file") (sourced from $(basename "$base") near the end).
+. "$base"
+EOF
+  echo "Installed wrapper $dst -> $base"
+
+  if [ ! -e "$local_file" ]; then
+    echo "# Machine-specific configuration for this host" > "$local_file"
+    echo "Created $local_file"
+  fi
+}
+
+# ~/.bash_profile is a special case: bash login shells read it but not
+# ~/.bashrc, so it just needs to source ~/.bashrc. Real file (not symlink)
+# because installers like rustup commonly append here.
+install_bash_profile() {
+  local dst="$HOME/.bash_profile"
+
+  if [ -f "$dst" ] && [ ! -L "$dst" ] && grep -qF '$HOME/.bashrc' "$dst"; then
+    skip_msg "$dst already sources ~/.bashrc"
+    return
+  fi
+
+  if [ -L "$dst" ]; then
+    rm "$dst"
+  elif [ -e "$dst" ]; then
+    if [ -e "$dst.bak" ]; then
+      echo "Error: $dst.bak already exists. Reconcile manually before installing." >&2
+      exit 1
+    fi
+    mv "$dst" "$dst.bak"
+    echo "Backing up existing $dst -> $dst.bak"
+  fi
+
+  cat > "$dst" <<'EOF'
+# Wrapper installed by dotfiles install.sh.
+# Bash login shells (e.g. SSH) read ~/.bash_profile but NOT ~/.bashrc.
+# Real file (not symlink) so installers like rustup can append safely.
+[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+EOF
+  echo "Installed wrapper $dst -> ~/.bashrc"
+}
+
+# Shell. ~/.bashrc and ~/.zshrc are real wrapper files (not symlinks) — see
+# install_wrapper above for why. ~/.shellrc stays a symlink because tools
+# never write there, and shellrc is sourced from inside bashrc/zshrc anyway.
 link "$DOTFILES/shellrc" "$HOME/.shellrc"
-link_shell "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
-link_shell "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
-# bash_profile is a 1-line shim that sources ~/.bashrc so SSH/login shells
-# pick up our config. Per-host overrides flow through ~/.bashrc.local, so
-# this file doesn't need its own .local override.
-link "$DOTFILES/bash_profile" "$HOME/.bash_profile"
+install_wrapper "$DOTFILES/zshrc" "$HOME/.zshrc" "$HOME/.zshrc.local"
+install_wrapper "$DOTFILES/bashrc" "$HOME/.bashrc" "$HOME/.bashrc.local"
+install_bash_profile
 # Seed ~/.shellrc.local if missing (shellrc sources it for shared per-host config)
 if [ ! -e "$HOME/.shellrc.local" ]; then
   echo "# Machine-specific configuration shared by bash and zsh" > "$HOME/.shellrc.local"

@@ -41,10 +41,6 @@ setopt COMPLETE_ALIASES
 # Shift-tab to cycle backwards
 bindkey -M menuselect '^[[Z' reverse-menu-complete
 
-# atuin
-[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
-command -v atuin &>/dev/null && eval "$(atuin init zsh)"
-
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.zshrc.local ] && source ~/.zshrc.local
 

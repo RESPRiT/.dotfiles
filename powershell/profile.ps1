@@ -175,13 +175,6 @@ if (Get-Command zoxide -ErrorAction SilentlyContinue) {
     function global:... { z ../.. }
 }
 
-if (Get-Command atuin -ErrorAction SilentlyContinue) {
-    # Suppress "Atuin module is already loaded, replacing it" on profile reload.
-    $_wp = $WarningPreference; $WarningPreference = 'SilentlyContinue'
-    Invoke-Expression (& { (atuin init powershell | Out-String) })
-    $WarningPreference = $_wp
-}
-
 # posh-git: import for tab completion only (the prompt half is hand-rolled above)
 if (Get-Module -ListAvailable posh-git) {
     Import-Module posh-git -ErrorAction SilentlyContinue

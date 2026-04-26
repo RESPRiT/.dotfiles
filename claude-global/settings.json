@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/remerge-on-overlay-edit.sh\""
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/remerge-on-settings-edit.sh\""
           },
           {
             "type": "command",

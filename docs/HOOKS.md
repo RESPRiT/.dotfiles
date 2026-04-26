@@ -2,6 +2,7 @@
 tracks:
   - claude-global/settings.json
   - claude-global/merge-settings.sh
+  - claude-global/hooks/remerge-on-settings-edit.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc

@@ -27,7 +27,7 @@ case "$file_path" in
 
       drift_line=$(printf '%s\n' "$merge_err" | grep -E '^merge-settings\.sh: DRIFT:' | head -1)
       if [ -n "$drift_line" ]; then
-        msg="[claude-settings] $drift_line. ~/.claude/settings.json is jq-merged from ~/.dotfiles/claude-global/settings.json (base) + ~/.claude/settings.local.json (overlay) — direct edits get clobbered each merge. Read the drift log and promote intentional edits to base or overlay; discard the rest."
+        msg="[claude-settings] $drift_line. ~/.claude/settings.json is jq-merged from ~/.dotfiles/claude-global/settings.json (base) + ~/.claude/settings.local.json (overlay) — direct edits get clobbered each merge. Read the drift log and promote intentional edits to the overlay (machine-local, fine to edit directly) or the base (a change to the committed dotfiles repo — check in with the user before editing); discard the rest."
         jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}'
       fi
     fi

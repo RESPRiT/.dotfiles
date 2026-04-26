@@ -34,6 +34,11 @@ fi
 mkdir -p "$(dirname "$DEST")" "$(dirname "$OVERLAY")"
 [ ! -f "$OVERLAY" ] && echo '{}' > "$OVERLAY"
 
+# Skip if dest is newer than both inputs (exit 2 = up to date).
+if [ -f "$DEST" ] && [ "$DEST" -nt "$BASE" ] && [ "$DEST" -nt "$OVERLAY" ]; then
+  exit 2
+fi
+
 tmp=$(mktemp "${TMPDIR:-/tmp}/claude-settings.XXXXXX")
 if jq -s '
   def deepmerge($a; $b):

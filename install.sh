@@ -8,6 +8,7 @@ PROMPT_COLOR=$'\033[1;38;5;117m'
 YES_COLOR=$'\033[1;38;5;120m'   # light green
 N_COLOR=$'\033[1;38;5;210m'     # light red (for N in y/[N] prompts)
 SKIP_COLOR=$'\033[38;5;240m'    # dark grey (for "already X" skip messages)
+BANNER_COLOR=$'\033[38;5;244m'  # mid grey (for startup decision banner)
 RESET=$'\033[0m'
 
 # --fresh re-prompts every optional install by clearing stored "no" decisions.
@@ -57,6 +58,98 @@ record_decline() {
   was_declined "$1" && return
   echo "$1" >> "$DECISIONS_FILE"
 }
+
+# Friendly label for a decision key, used by the startup banner and the
+# reconciliation block below.
+decision_label() {
+  case "$1" in
+    auto-update)      echo "auto-update for dotfiles" ;;
+    docs-clone)       echo "cloning .docs companion repo" ;;
+    docs-auto-update) echo "auto-update for .docs" ;;
+    tmux-upgrade)     echo "tmux 3.5+ upgrade" ;;
+    keychain)         echo "keychain (SSH agent manager)" ;;
+    zsh-install)      echo "installing zsh" ;;
+    zsh-default)      echo "setting zsh as default shell" ;;
+    rust)             echo "Rust toolchain" ;;
+    go)               echo "Go toolchain" ;;
+    zoxide)           echo "zoxide" ;;
+    atuin-install)    echo "atuin" ;;
+    atuin-login)      echo "atuin login / sync" ;;
+    *)                echo "$1" ;;
+  esac
+}
+
+# Returns 0 if the underlying state for a declined decision is now satisfied,
+# meaning the marker is stale and can be cleared without re-prompting. Each
+# branch must mirror the corresponding "already X" short-circuit in the
+# install step below — drift here means we'd re-prompt unnecessarily.
+is_satisfied() {
+  local _rc _ver _maj _min _mr
+  case "$1" in
+    auto-update)
+      [ -n "$DOTFILES_AUTO_UPDATE" ] && return 0
+      for _rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+        [ -f "$_rc" ] && grep -q 'DOTFILES_AUTO_UPDATE' "$_rc" && return 0
+      done
+      return 1 ;;
+    docs-clone)
+      [ -d "$HOME/.docs/.git" ] ;;
+    docs-auto-update)
+      [ -n "$DOCS_AUTO_UPDATE" ] && return 0
+      for _rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+        [ -f "$_rc" ] && grep -q 'DOCS_AUTO_UPDATE' "$_rc" && return 0
+      done
+      return 1 ;;
+    tmux-upgrade)
+      command -v tmux &>/dev/null || return 1
+      _ver="$(tmux -V | awk '{print $2}')"
+      _maj="${_ver%%.*}"
+      _mr="${_ver#*.}"
+      _min="${_mr%%[!0-9]*}"
+      { [ "$_maj" -gt 3 ] || { [ "$_maj" -eq 3 ] && [ "$_min" -ge 5 ]; }; } ;;
+    keychain)
+      [ -x "$HOME/.local/bin/keychain" ] && return 0
+      command -v keychain &>/dev/null && return 0
+      [ -S "$HOME/.1password/agent.sock" ] && return 0
+      [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null && return 0
+      return 1 ;;
+    zsh-install)    command -v zsh &>/dev/null ;;
+    zsh-default)    [ "$(basename "${SHELL:-}")" = "zsh" ] ;;
+    rust)           command -v cargo &>/dev/null ;;
+    go)             command -v go &>/dev/null ;;
+    zoxide)         command -v zoxide &>/dev/null ;;
+    atuin-install)  command -v atuin &>/dev/null ;;
+    atuin-login)    [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ] ;;
+    *)              return 1 ;;
+  esac
+}
+
+# Reconcile declined decisions with current state: drop entries the user has
+# satisfied out-of-band (e.g., declined "install zsh" but later installed it
+# manually). Done silently — what's left is what the banner reports.
+if [ "$FRESH" != true ] && [ -s "$DECISIONS_FILE" ]; then
+  _kept=$(mktemp)
+  while IFS= read -r _key; do
+    [ -z "$_key" ] && continue
+    is_satisfied "$_key" || echo "$_key" >> "$_kept"
+  done < "$DECISIONS_FILE"
+  if [ -s "$_kept" ]; then
+    mv "$_kept" "$DECISIONS_FILE"
+  else
+    rm -f "$DECISIONS_FILE" "$_kept"
+  fi
+  unset _kept _key
+
+  if [ -s "$DECISIONS_FILE" ]; then
+    printf '%sSkipping previously declined prompts:%s\n' "$BANNER_COLOR" "$RESET"
+    while IFS= read -r _key; do
+      [ -z "$_key" ] && continue
+      printf '%s  - %s%s\n' "$BANNER_COLOR" "$(decision_label "$_key")" "$RESET"
+    done < "$DECISIONS_FILE"
+    printf '%sRe-run with --fresh to re-prompt these.%s\n\n' "$BANNER_COLOR" "$RESET"
+    unset _key
+  fi
+fi
 
 link() {
   local src="$1" dst="$2"
@@ -256,8 +349,13 @@ fi
 # claude-global/merge-settings.sh for the jq logic, and CLAUDE.md for rationale.
 mkdir -p "$HOME/.claude"
 if command -v jq &>/dev/null; then
-  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" \
-    && echo "Merged Claude settings -> $HOME/.claude/settings.json"
+  _merge_rc=0
+  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" || _merge_rc=$?
+  case "$_merge_rc" in
+    0) echo "Merged Claude settings -> $HOME/.claude/settings.json" ;;
+    2) skip_msg "Claude settings already up to date" ;;
+  esac
+  unset _merge_rc
 else
   skip_msg "Skipped Claude settings merge (jq not installed)"
 fi
@@ -344,7 +442,8 @@ if [ -x "$HOME/.tmux/plugins/tpm/bin/install_plugins" ]; then
   # `tmux start-server` alone doesn't load the conf. Source the conf first so
   # the `run '~/.tmux/plugins/tpm/tpm'` line executes and sets the variable.
   tmux start-server \; source-file "$HOME/.tmux.conf"
-  "$HOME/.tmux/plugins/tpm/bin/install_plugins"
+  "$HOME/.tmux/plugins/tpm/bin/install_plugins" \
+    | sed -E "s/^(Already installed.*)$/${SKIP_COLOR}\\1${RESET}/"
 fi
 
 # Ghostty
@@ -569,21 +668,8 @@ fi
 "$DOTFILES/hooks/post-merge"
 
 echo ""
-echo "Done! Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"
-
-# Source the current shell's rc so the session picks up new config immediately.
-# Check $SHELL (login shell) rather than $BASH_VERSION/$ZSH_VERSION, because
-# this script always runs under #!/bin/bash regardless of the user's shell.
-case "$SHELL" in
-  */bash)
-    if [ -f "$HOME/.bashrc" ]; then
-      echo "Sourcing ~/.bashrc..."
-      # shellcheck disable=SC1091
-      source "$HOME/.bashrc"
-    fi
-    ;;
-  *)
-    echo "Restart your shell to pick up the new config."
-    ;;
-esac
+echo "${YES_COLOR}Done!${RESET} Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"
+echo ""
+echo "${PROMPT_COLOR}Restarting your shell to pick up new config...${RESET}"
+exec "${SHELL:-/bin/bash}"
 

@@ -46,13 +46,18 @@ _repo_auto_update() {
 
   GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch --quiet 2>/dev/null || return
 
+  # Bail unless upstream actually has commits we don't. `git diff HEAD..@{u}`
+  # compares trees and returns non-empty when local is *ahead* (no pull
+  # needed); rev-list HEAD..@{u} is the commits-to-pull count.
+  local commit_count
+  commit_count=$(git -C "$repo" rev-list --count HEAD..@{u} 2>/dev/null)
+  case "$commit_count" in ''|0) return ;; esac
+
+  local plural=""
+  [ "$commit_count" != "1" ] && plural="s"
+
   local changed
   changed=$(git -C "$repo" diff --name-only HEAD..@{u} 2>/dev/null)
-  [ -z "$changed" ] && return
-
-  local commit_count plural=""
-  commit_count=$(git -C "$repo" rev-list --count HEAD..@{u} 2>/dev/null)
-  [ "$commit_count" != "1" ] && plural="s"
 
   local timestamp
   timestamp=$(date +%s)

@@ -65,6 +65,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/remerge-on-overlay-edit.sh\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.dotfiles/claude-global/hooks/docs-refs-notify.py\""
           }
         ]
       }

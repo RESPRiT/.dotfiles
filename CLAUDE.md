@@ -7,12 +7,16 @@
 - `hooks/` — Git hooks managed by the repo. `install.sh` symlinks these into `.git/hooks/`.
 - `migrations/` — Numbered migration scripts (e.g., `001-name.sh`) for handling breaking changes between repo versions.
 - `ghostty/` — Ghostty terminal config, symlinked to `~/.config/ghostty/`.
+- `powershell/` — PowerShell profile and Windows installer (`install.ps1`). Profile is symlinked to `$HOME\Documents\PowerShell\profile.ps1` ($PROFILE.CurrentUserAllHosts). Per-machine overrides live in `$HOME\Documents\PowerShell\profile.local.ps1`.
 
-## install.sh
+## Installers
 
-Idempotent setup script. Symlinks dotfiles into `$HOME`, installs plugins, sets up git hooks, and runs pending migrations. Safe to re-run — already-correct symlinks are skipped, existing files are backed up.
+Two installers, one per platform family. Both are idempotent (safe to re-run; already-correct symlinks are skipped, existing files are backed up) and share the same `.state/decisions` file.
 
-Machine-specific config goes in `~/.zshrc.local` or `~/.bashrc.local` (created by install.sh if missing).
+- **`install.sh`** (POSIX — Linux, macOS, WSL, Git Bash): symlinks the bash/zsh/vim/tmux/ghostty config into `$HOME`, installs CLI tools (rust, go, zoxide, atuin, keychain, tmux 3.5+), wires the post-merge git hook, and runs pending migrations.
+- **`powershell/install.ps1`** (Windows): symlinks `powershell/profile.ps1` into `$HOME\Documents\PowerShell\`, installs CLI tools via winget (zoxide, atuin, neovim, gh CLI, eza). Self-elevates via UAC because symlink creation requires admin (Developer Mode off). Does **not** run bash migrations — seeds `.state/migrated` to the current max so `post-merge` doesn't replay them when `git pull` is run from Git Bash on the same machine.
+
+Machine-specific config goes in `~/.zshrc.local` / `~/.bashrc.local` (POSIX) or `$HOME\Documents\PowerShell\profile.local.ps1` (Windows). All are created automatically if missing.
 
 ## Local override pattern
 
@@ -24,14 +28,17 @@ All configuration files managed by this repo should strive to support a "dotfile
 Examples in the repo:
 - `zshrc:64` sources `~/.zshrc.local` after everything else
 - `tmux.conf` sources `~/.tmux.local.conf` via `if-shell` at the bottom
+- `powershell/profile.ps1` sources `profile.local.ps1` (in `$PROFILE`'s parent dir) at the bottom
 
-When adding a new config file to the repo, prefer this pattern over the plain `link` helper unless there's a specific reason not to (e.g., the file format has no include/source mechanism).
+When adding a new config file to the repo, prefer this pattern over the plain `link` helper unless there's a specific reason not to (e.g., the file format has no include/source mechanism). On the PowerShell side, `Link-Shell` in `install.ps1` is the equivalent of bash's `link_shell`.
 
 **Known gap:** Claude Code configuration files (`~/.claude/settings.local.json`, etc.) do not currently follow this pattern — they're symlinked directly with no local override mechanism, because JSON has no native include syntax and Claude Code doesn't merge multiple settings files. Revisit if/when Claude Code supports layered config.
 
-## Shell parity (bash + zsh)
+## Shell parity (bash + zsh, plus PowerShell on Windows)
 
 This repo treats bash and zsh as first-class shells. Shared shell config lives in `shellrc`, which is sourced by both `bashrc` and `zshrc`. When adding shell-level functionality (functions, aliases, exports, PATH tweaks), prefer `shellrc` so the behavior is consistent across both shells. Only put code in `zshrc`/`bashrc` directly when it's genuinely shell-specific (zsh completion, bash readline bindings, shell-specific prompt escapes, etc.).
+
+PowerShell is a separate-shell-family case (Windows). Its config lives in `powershell/profile.ps1` and aims for behavioral parity with the POSIX side — same prompt shape (`user@host cwd(branch) >`), same aliases (`ll`/`l`/`gs`/`cd`→`z`/`..`/`...`/`extract`/`reload`), same git-branch coloring rules (red dirty / pink main|master / green other). When changing prompt/alias semantics, update both sides.
 
 `shellrc` should stick to syntax that works in both shells:
 - Use `[ ... ]` (POSIX test), not `[[ ... ]]` (bash/zsh extension).
@@ -52,3 +59,4 @@ Breaking changes between repo versions are handled by numbered scripts in `migra
 - Both `install.sh` and `post-merge` will relocate legacy `~/.dotfiles-{migrated,decisions}` into `.state/` if found, so existing machines upgrade transparently.
 - Each migration script should be idempotent — check state before acting.
 - Naming convention: `NNN-description.sh` (e.g., `001-claude-global-rename.sh`).
+- Migrations are bash scripts (POSIX). On Windows, `install.ps1` seeds `.state/migrated` to the highest existing migration number so historical bash migrations don't run when `git pull` triggers `post-merge` via Git Bash. New migrations added later still run on Windows via Git Bash, so they should be written defensively (e.g., guard tmux/keychain steps with `command -v` checks) so they no-op cleanly on Windows.

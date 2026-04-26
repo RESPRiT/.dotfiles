@@ -33,27 +33,12 @@ fi
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
 
-# Auto-update repos (must run after local rc sets the *_AUTO_UPDATE flags)
-_repo_updates_pending=0
+# Auto-update repos (must run after local rc sets the *_AUTO_UPDATE flags).
+# Synchronous so post-merge migration output is visible at startup.
 if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
-  (_repo_auto_update dotfiles "$HOME/.dotfiles" &)
-  _repo_updates_pending=1
+  _repo_auto_update dotfiles "$HOME/.dotfiles"
 fi
 if [ -d "$HOME/.docs/.git" ] && [ "$DOCS_AUTO_UPDATE" = "1" ]; then
-  (_repo_auto_update docs "$HOME/.docs" &)
-  _repo_updates_pending=1
+  _repo_auto_update docs "$HOME/.docs"
 fi
-if [ "$_repo_updates_pending" = 1 ]; then
-  _repo_show_updates() {
-    local msg
-    for msg in "$HOME/.dotfiles/.update-msg" "$HOME/.docs/.update-msg"; do
-      if [ -f "$msg" ]; then
-        cat "$msg"
-        rm -f "$msg"
-      fi
-    done
-  }
-  PROMPT_COMMAND="_repo_show_updates;${PROMPT_COMMAND:+$PROMPT_COMMAND}"
-fi
-unset _repo_updates_pending
 unset -f _repo_auto_update

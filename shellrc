@@ -36,15 +36,34 @@ if [ -L "$HOME/.shellrc" ]; then
 fi
 : "${_dotfiles_dir:=$HOME/.dotfiles}"
 
+# Run a command with a wall-clock timeout (seconds). Tries GNU `timeout`,
+# then `gtimeout` (coreutils on macOS), then perl's alarm-then-exec trick
+# (the SIGALRM timer survives exec on macOS and Linux). No-op fallback if
+# none are available.
+_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  elif command -v perl >/dev/null 2>&1; then
+    perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
 # Auto-update a git repo from its upstream. Used by dotfiles and ~/.docs
 # (set DOTFILES_AUTO_UPDATE=1 / DOCS_AUTO_UPDATE=1 in ~/.zshrc.local or ~/.bashrc.local).
+# Runs synchronously at shell startup so post-merge hook output (e.g. migration
+# progress and failures) prints to the user's terminal.
 # Args: <label> <repo-dir>
 _repo_auto_update() {
   local label="$1" repo="$2"
   local backup="$repo/backup"
-  local msg="$repo/.update-msg"
 
-  GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch --quiet 2>/dev/null || return
+  # 5s cap on the fetch so a flaky network can't hang shell startup.
+  GIT_TERMINAL_PROMPT=0 _with_timeout 5 git -C "$repo" fetch --quiet 2>/dev/null || return
 
   # Bail unless upstream actually has commits we don't. `git diff HEAD..@{u}`
   # compares trees and returns non-empty when local is *ahead* (no pull
@@ -75,10 +94,10 @@ _repo_auto_update() {
     fi
   done
 
-  GIT_TERMINAL_PROMPT=0 git -C "$repo" pull --ff-only --quiet 2>/dev/null \
-    && printf '\033[1;34m[%s]\033[0m Updated from remote \033[38;5;240m(%s commit%s)\033[0m\n' "$label" "$commit_count" "$plural" > "$msg"
+  printf '\033[1;34m[%s]\033[0m Updating from remote \033[38;5;240m(%s commit%s)\033[0m\n' "$label" "$commit_count" "$plural"
+  # stderr is *not* redirected — post-merge prints migration failures there.
+  GIT_TERMINAL_PROMPT=0 git -C "$repo" pull --ff-only --quiet
 }
-# Execution is deferred to zshrc/bashrc (after local rc sets the *_AUTO_UPDATE flags)
 
 # Warn if install.sh hasn't been re-run since the migration system was added.
 # Either condition means `git pull` won't trigger pending migrations.

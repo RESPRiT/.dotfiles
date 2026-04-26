@@ -1,33 +1,25 @@
 # Claude Code hooks
 
-Claude Code hooks are registered in `~/.claude/settings.json`. That file is **not** managed by this dotfiles repo — it's a real file per machine, not a symlink. See CLAUDE.md "Known gap" note under *Local override pattern*.
+Claude Code hooks are declared in `claude-global/settings.json` (the canonical base) and merged into `~/.claude/settings.json` at install/post-merge time by `claude-global/merge-settings.sh`. Per-machine hook overrides go in `~/.claude/settings.local.json` — object arrays concat under the merge rules, so an overlay can add hooks without replacing the base list. See CLAUDE.md *Local override pattern* → "Claude Code settings (special case)" for the full merge semantics.
 
-This doc captures the hook-related conventions and any pieces that need to be reproduced by hand on a new machine until the settings-file format supports layering.
+## Resume-hint plumbing
 
-## Resume-hint plumbing (machine-local)
-
-The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>`) after a non-tmux-launched claude session exits. It gets the session ID from a `SessionEnd` hook that writes the JSON payload Claude Code sends on stdin into the path in `$CLAUDE_EXIT_FILE` (exported into the tmux environment by the wrapper itself).
-
-Because the primary `SessionEnd` hook dispatches to `~/.metacog/hooks/dispatch.sh`, which is currently short-circuited by a `exit 0` GAMMA gate (and historically never wrote to `$CLAUDE_EXIT_FILE` anyway), the wrapper cannot rely on that handler. The workaround is a second `SessionEnd` entry in `~/.claude/settings.json` that does nothing but capture stdin:
+The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>`) after a non-tmux-launched session exits. It pulls the session ID from a hook that writes Claude Code's stdin payload into the path in `$CLAUDE_EXIT_FILE` (exported into the tmux environment by the wrapper itself):
 
 ```json
-"SessionEnd": [
-  { "hooks": [ { "type": "command", "command": "~/.metacog/hooks/dispatch.sh SessionEnd" } ] },
-  { "hooks": [ { "type": "command", "command": "[ -n \"$CLAUDE_EXIT_FILE\" ] && cat > \"$CLAUDE_EXIT_FILE\"" } ] }
+"SessionStart": [
+  {
+    "matcher": "",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "sh -c 'test -n \"$CLAUDE_EXIT_FILE\" && cat > \"$CLAUDE_EXIT_FILE\"'"
+      }
+    ]
+  }
 ]
 ```
 
-### Reproducing on a new machine
+`SessionStart`, not `SessionEnd` — the latter empirically missed the `--resume` case, while `SessionStart` fires reliably for `claude -c`, `--resume`, `/clear`, and compact. The hook overwrites the file on each fire, so the captured session ID is always the most recent one (post-`/clear` or post-compact, if applicable).
 
-Since `~/.claude/settings.json` is not symlinked from this repo, a fresh machine will not have the capture hook. To restore resume-hint output:
-
-1. Open `~/.claude/settings.json`.
-2. Find the `SessionEnd` array under `hooks`.
-3. Append the capture entry shown above (the one that `cat`s stdin into `$CLAUDE_EXIT_FILE`).
-
-### When this can go away
-
-Two paths out:
-
-- Claude Code gains layered settings (a `settings.local.json`-style include merged into `settings.json`). At that point this hook can be committed to `claude-global/` and symlinked like the other settings files.
-- The metacog dispatcher's `SessionEnd` handler starts writing to `$CLAUDE_EXIT_FILE` directly (once the GAMMA gate at `dispatch.sh:18` is lifted). Then the second entry becomes redundant.
+Because the hook lives in the committed base, fresh machines pick it up automatically the first time `merge-settings.sh` runs — no manual reproduction step.

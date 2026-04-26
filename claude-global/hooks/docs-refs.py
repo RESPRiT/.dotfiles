@@ -2,17 +2,20 @@
 """
 docs-refs: scan markdown docs for file/directory references.
 
-Two sources of references per doc:
-  1. Backtick-quoted tokens in the body that resolve to an existing file or dir.
-  2. YAML frontmatter `tracks:` list (resolved the same way; unresolved entries
-     are dropped, but will start matching once the path exists — useful for
-     declaring intent before a file is created).
+References are declared explicitly via a YAML frontmatter `tracks:` list
+(inline `[a, b]` or block `- a` form). Body-text scanning is intentionally
+*not* done — backtick tokens that happen to resolve to existing paths
+produced false positives (e.g. `docs/` matching the docs directory itself,
+which then matched every sibling doc).
 
-Resolution attempts (in order, first hit wins):
+Resolution attempts per token (in order, first hit wins):
   - Absolute path (after `~` expansion).
   - Relative to the doc file's parent directory.
   - If the doc lives inside a `docs/` subtree, relative to the `docs/`'s parent
     (the natural "project root").
+
+Unresolved entries are dropped silently but will start matching as soon as
+the path exists — useful for declaring intent before a file is created.
 
 Subcommands:
   scan [dir...]
@@ -22,6 +25,11 @@ Subcommands:
   for-file <changed_file> [--dir DIR ...]
     Print absolute paths of docs that reference <changed_file>, one per line.
     A directory ref matches any file under it. Default dirs as above.
+
+  has-tracks <doc>
+    Exit 0 iff <doc> declares a `tracks:` block (even if empty/unresolved);
+    exit 1 if missing or unreadable. Used by the notify hook to flag docs
+    that opted out of the reference system silently.
 
   --quiet  (for-file only): suppress errors, exit 0 even on failure.
 """
@@ -35,7 +43,6 @@ import re
 import sys
 from pathlib import Path
 
-BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 TRACKS_INLINE_RE = re.compile(r"^tracks:\s*\[(.*?)\]\s*$", re.MULTILINE)
 TRACKS_BLOCK_RE = re.compile(r"^tracks:\s*\n((?:\s*-\s*.+\n?)+)", re.MULTILINE)
@@ -125,13 +132,6 @@ def extract_refs(doc: Path) -> list[Path]:
     for token in parse_frontmatter_tracks(text):
         add(resolve_token(token, doc))
 
-    body = text
-    fm_match = FRONTMATTER_RE.match(text)
-    if fm_match:
-        body = text[fm_match.end():]
-    for m in BACKTICK_RE.finditer(body):
-        add(resolve_token(m.group(1), doc))
-
     return out
 
 
@@ -173,6 +173,20 @@ def file_matches_ref(changed: Path, ref: Path) -> bool:
     return False
 
 
+def cmd_has_tracks(args: argparse.Namespace) -> int:
+    try:
+        text = Path(args.path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 1
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return 1
+    fm = m.group(1)
+    if TRACKS_INLINE_RE.search(fm) or TRACKS_BLOCK_RE.search(fm):
+        return 0
+    return 1
+
+
 def cmd_for_file(args: argparse.Namespace) -> int:
     target_raw = Path(os.path.expanduser(args.changed_file))
     try:
@@ -204,6 +218,10 @@ def main(argv: list[str]) -> int:
     p_ff.add_argument("--dir", action="append", default=[])
     p_ff.add_argument("--quiet", action="store_true")
     p_ff.set_defaults(func=cmd_for_file)
+
+    p_ht = sub.add_parser("has-tracks", help="exit 0 iff doc declares a tracks: block")
+    p_ht.add_argument("path")
+    p_ht.set_defaults(func=cmd_has_tracks)
 
     args = parser.parse_args(argv)
     try:

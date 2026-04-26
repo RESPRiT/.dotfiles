@@ -192,6 +192,14 @@ export ENABLE_LSP_TOOL=1
 # destroy-unattached on makes the session die as soon as claude exits
 # or the terminal closes, matching an unwrapped claude's lifecycle.
 claude() {
+  # Re-merge ~/.claude/settings.json from base + overlay if the overlay is
+  # newer. mtime guard makes the no-op case ~free; full merge is ~30ms.
+  # Catches direct edits to settings.local.json that haven't been picked up
+  # by install.sh / post-merge yet. See claude-global/merge-settings.sh.
+  if [ "$HOME/.claude/settings.local.json" -nt "$HOME/.claude/settings.json" ]; then
+    bash "$_dotfiles_dir/claude-global/merge-settings.sh" 2>/dev/null
+  fi
+
   if [ -n "$TMUX" ]; then
     # @claude-running gates a tmux S-Enter → C-j remap that works around a
     # CSI-u Shift+Enter regression in Claude Code 2.1.117+ (see tmux.conf).
@@ -241,9 +249,13 @@ claude() {
   local cmd="$claude_bin"
   [ $# -gt 0 ] && cmd="$cmd $(printf '%q ' "$@")"
   # Claude's farewell text (resume hint, cost summary) is lost when
-  # the tmux session is destroyed. A SessionEnd hook in settings.json
+  # the tmux session is destroyed. A SessionStart hook in settings.json
   # dumps the session payload to $CLAUDE_EXIT_FILE; we parse the session
-  # ID from it after tmux returns.
+  # ID from it after tmux returns. SessionStart (not SessionEnd) because
+  # it fires reliably for `claude -c`, `--resume`, `/clear`, and compact —
+  # SessionEnd was empirically missing the resume case. The hook's
+  # `cat > file` overwrites on each fire, so the file ends up with the
+  # most recent session_id (post-/clear or post-compact, if applicable).
   local exit_capture
   exit_capture=$(mktemp "${TMPDIR:-/tmp}/claude-exit.XXXXXX") || return 1
   # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux

@@ -32,7 +32,12 @@ Examples in the repo:
 
 When adding a new config file to the repo, prefer this pattern over the plain `link` helper unless there's a specific reason not to (e.g., the file format has no include/source mechanism). On the PowerShell side, `Link-Shell` in `install.ps1` is the equivalent of bash's `link_shell`.
 
-**Known gap:** Claude Code configuration files (`~/.claude/settings.local.json`, etc.) do not currently follow this pattern — they're symlinked directly with no local override mechanism, because JSON has no native include syntax and Claude Code doesn't merge multiple settings files. Revisit if/when Claude Code supports layered config.
+**Claude Code settings (special case):** Claude Code has no `include` directive and no user-scope `.local.json` overlay (only project-scope), so the symlink-plus-source pattern doesn't work. Instead, `~/.claude/settings.json` is **generated** at install time by `claude-global/merge-settings.sh`, which deep-merges:
+
+- `claude-global/settings.json` — committed base, shared across machines
+- `~/.claude/settings.local.json` — machine-local overlay (seeded as `{}` on first install; not in repo)
+
+into the destination `~/.claude/settings.json`. Merge rules: objects deep-merge (right wins on scalars), string arrays concat-and-dedupe (so `permissions.allow` accumulates from both files), object arrays concat (so hook lists chain). The merge runs in `install.sh` and `hooks/post-merge`, so pulling new base settings auto-regenerates. Direct edits to `~/.claude/settings.json` are blocked by the `protect-settings.sh` PreToolUse hook — agents are directed to the base or overlay. The destination is a real file, not a symlink, because Claude Code has a known bug where symlinked `settings.json` triggers permission failures (anthropics/claude-code#3575).
 
 ## Shell parity (bash + zsh, plus PowerShell on Windows)
 

@@ -89,10 +89,13 @@ fi
 
 # COLORTERM doesn't survive SSH (sshd only accepts LANG/LC_*), but TERM does.
 # Infer truecolor from terminal-specific TERM values before falling back.
+# Windows Terminal advertises truecolor but exports neither COLORTERM nor a
+# terminal-specific TERM, so detect it via WT_SESSION.
 if [ -z "$COLORTERM" ]; then
   case "$TERM" in
     xterm-ghostty|xterm-kitty|alacritty|wezterm) export COLORTERM=truecolor ;;
     tmux-*|screen-*) export COLORTERM=truecolor ;;
+    *) [ -n "$WT_SESSION" ] && export COLORTERM=truecolor ;;
   esac
 fi
 
@@ -247,8 +250,15 @@ claude() {
   # only propagates vars in `update-environment` from the calling shell into
   # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd
   # be dropped whenever the wrapper attaches to an already-running server.
+  # COLORTERM, by contrast, is read at *server* startup by tmux.conf's
+  # `%if` block (to add :RGB to terminal-features), so we export it into
+  # the subshell that invokes tmux — making the wrapper self-sufficient
+  # even if the outer shell predates the WT_SESSION inference in shellrc.
+  # Setting COLORTERM here is consistent with already opting into truecolor
+  # via CLAUDE_CODE_TMUX_TRUECOLOR=1 below.
   # Subshell so the pre-cd for `--resume <id>` doesn't leak to the caller.
   (
+    export COLORTERM=truecolor
     [ -n "$_sess_cwd" ] && [ -d "$_sess_cwd" ] && cd "$_sess_cwd"
     tmux new-session -s "claude-$$" \
       -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \

@@ -30,6 +30,10 @@ if [[ $- == *i* ]]; then
   bind '"\e[Z":menu-complete-backward'
 fi
 
+# atuin
+[ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
+command -v atuin &>/dev/null && eval "$(atuin init bash)"
+
 # Source machine-local config last so overrides (like DOTFILES_AUTO_UPDATE) win
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
 

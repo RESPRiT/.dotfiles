@@ -430,6 +430,16 @@ fi
 # by claude-global/hooks/protect-settings.sh, wired up via PreToolUse. See
 # claude-global/merge-settings.sh for the jq logic, and CLAUDE.md for rationale.
 mkdir -p "$HOME/.claude"
+
+# Status line: committed portable base + optional machine-local extension.
+# The base script invokes ~/.claude/statusline-command.local.sh (if present)
+# to append per-machine segments (e.g. metacog/trace). On first install,
+# link_shell moves any pre-existing monolithic statusline-command.sh to
+# .local.sh so existing machine-specific logic is preserved automatically.
+link_shell "$DOTFILES/claude-global/statusline-command.sh" \
+  "$HOME/.claude/statusline-command.sh" \
+  "$HOME/.claude/statusline-command.local.sh"
+
 if command -v jq &>/dev/null; then
   _merge_rc=0
   DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" || _merge_rc=$?

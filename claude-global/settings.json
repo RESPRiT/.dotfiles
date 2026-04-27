@@ -17,6 +17,14 @@
   "model": "opus",
   "autoUpdatesChannel": "latest",
   "skipAutoPermissionPrompt": true,
+  "skipDangerousModePermissionPrompt": true,
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "theme": "dark-daltonized",
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline-command.sh"
+  },
   "hooks": {
     "SessionStart": [
       {

@@ -1,8 +1,8 @@
 #!/bin/bash
-# Throwaway migration to validate the async-fetch + notice-file shell-launch
-# flow end-to-end. When you pull this commit into a shell, the bg fetch fires
-# post-merge, post-merge runs this script, and the line below should land in
-# .state/notice-dotfiles and surface above your next prompt.
-#
-# Revert the commit and decrement .state/migrated back to 4 once verified.
-echo "[test-migration 005] hello from migrations/005-test-shell-launch.sh at $(date)"
+# No-op. This migration was originally a test fixture for the shell-launch
+# async/notice-file flow (Apr 2026); a few machines auto-updated and ran it
+# before it could be cleaned up. Migrations are append-only across the
+# fleet — reverting would force every already-bumped machine to manually
+# rewind .state/migrated, which is worse than leaving a no-op behind.
+# Future migrations resume at 006.
+exit 0

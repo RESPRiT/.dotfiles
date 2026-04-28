@@ -38,7 +38,10 @@ command -v atuin &>/dev/null && eval "$(atuin init bash)"
 [ -f ~/.bashrc.local ] && . ~/.bashrc.local
 
 # Auto-update repos (must run after local rc sets the *_AUTO_UPDATE flags).
-# Synchronous so post-merge migration output is visible at startup.
+# Async: forks the fetch+pull+post-merge to a detached background subshell.
+# Anything pulled (including migration output) lands in .state/notice-<label>;
+# the _repo_show_notices PROMPT_COMMAND function (registered in shellrc)
+# prints it on the next prompt redraw.
 if [ -d "$HOME/.dotfiles/.git" ] && [ "$DOTFILES_AUTO_UPDATE" = "1" ]; then
   _repo_auto_update dotfiles "$HOME/.dotfiles"
 fi

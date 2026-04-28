@@ -4,18 +4,29 @@ tracks:
   - zshrc
   - shellrc
   - hooks/post-merge
+  - install.sh
   - ~/.ssh/config
 ---
 
 # Shell launch
 
-`bashrc`/`zshrc` invoke `_repo_auto_update` (defined in `shellrc`) synchronously at startup when `DOTFILES_AUTO_UPDATE=1` and/or `DOCS_AUTO_UPDATE=1` is set in local rc. Synchronous-with-output is deliberate: the prior detached-background `( … &)` form silently swallowed `post-merge` migration stderr and raced its stdout against the prompt redraw, so migration progress and failures were effectively invisible. The fetch is wrapped in a 5s wall-clock cap via `timeout`/`gtimeout`/`perl`'s alarm-then-exec trick (the SIGALRM timer survives `exec` on macOS and Linux), so a flaky network can't hang the prompt indefinitely.
+`bashrc`/`zshrc` invoke `_repo_auto_update` (defined in `shellrc`) at startup when `DOTFILES_AUTO_UPDATE=1` and/or `DOCS_AUTO_UPDATE=1` is set in local rc. The function forks the entire fetch+pull+`post-merge` pipeline into a detached background subshell and returns immediately, so shell startup is unblocked (~10ms regardless of network state). The fetch itself is wrapped in a 5s wall-clock cap via `timeout`/`gtimeout`/`perl`'s alarm-then-exec trick (the SIGALRM timer survives `exec` on macOS and Linux), so a flaky network can't pile up zombie processes.
 
-The dominant startup cost is the SSH handshake to github — measured at ~1s per fetch on this machine, paid twice when both repos auto-update. Wrapper, DNS, and `rev-list HEAD..@{u}` together are <60ms. The mitigation below keeps warm-shell startup under a second.
+The detach uses the double-subshell idiom — `( ( cmd ) & )` rather than `( cmd ) & disown` — so the interactive shell never sees a backgrounded job and zsh skips the `[N] PID` job-control announcement.
+
+If the background fetch finds upstream commits, it captures one headline line (`[label] Updated from remote (N commits)`) plus one line per migration that ran (`[migration] NAME ✓` or `✗`, emitted by `hooks/post-merge`) into `.state/notice-<label>` via a tmp-then-mv atomic write. `git pull` runs with `--quiet` so its own progress doesn't leak into the notice; per-migration stdout/stderr is appended to `.state/migrations.log` instead, keeping the notice terse while preserving a full transcript for debugging. A `_repo_show_notices` precmd hook (zsh) / `PROMPT_COMMAND` function (bash), also defined in `shellrc`, prints and clears those notice files on the next prompt redraw. If nothing was pulled, no notice is written and the user sees nothing.
+
+This is the third iteration of this code:
+
+- **Always-async with a sentinel-file headline** (pre-`0e7c0cc`): forked fetch+pull, success message in `$repo/.update-msg`, precmd hook displayed it. Lost migration output because only the headline was captured; failures went to `2>/dev/null`.
+- **Always-sync** (`0e7c0cc`): everything ran inline. Migration output was visible but the user paid a full network fetch on every shell launch.
+- **Always-async with a full-transcript notice + precmd hook** (current): keeps startup at ~10ms and recovers the migration-visibility property by capturing the whole pull+`post-merge` transcript into the notice file.
+
+Concurrent shells racing on the same repo can collide on git's index lock (the loser's `git pull` errors out). The error lands in the loser's notice file; the user sees both notices on the next prompt. Repo data is safe in either case. A `mkdir`-based mutex would prevent the collision, but two shells launched within ~500ms of each other isn't common enough to justify the extra moving part.
 
 ## SSH connection multiplexing (per-machine)
 
-Add to `~/.ssh/config`:
+`install.sh` prompts for this when at least one auto-update is enabled, and writes the block below to `~/.ssh/config`:
 
 ```
 Host github.com
@@ -24,9 +35,9 @@ Host github.com
   ControlPersist 10m
 ```
 
-One-time setup: `mkdir -p ~/.ssh/sockets && chmod 700 ~/.ssh/sockets`.
+(Plus `mkdir -p ~/.ssh/sockets && chmod 700 ~/.ssh/sockets`.) Decline once and the decision is recorded in `.state/decisions` so re-runs don't re-prompt; manually adding any `ControlMaster` line to `~/.ssh/config` also satisfies the check.
 
-The first ssh-based git op of a session opens a control socket and stays in the background; subsequent ops to the same `(user, host, port)` skip the handshake entirely. Observed: cold fetch ~1.27s (creates master), warm fetch ~0.51s (reuses master). End-to-end shell launch with both repos auto-updating drops from ~2.5s (two cold) to ~1.0s (two warm) inside the persist window.
+The first ssh-based git op of a session opens a control socket and stays in the background; subsequent ops to the same `(user, host, port)` skip the handshake entirely. Observed on this machine: cold fetch ~1.27s (creates master), warm fetch ~0.51s (reuses master). With the always-async design, multiplexing doesn't change shell startup latency (~10ms either way), but it cuts the *background* fetch's wall-clock from ~1.5s to ~0.5s — so notices land on the user's next prompt that much sooner.
 
 This config is **not** committed to the dotfiles repo:
 

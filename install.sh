@@ -66,6 +66,7 @@ decision_label() {
     auto-update)      echo "auto-update for dotfiles" ;;
     docs-clone)       echo "cloning .docs companion repo" ;;
     docs-auto-update) echo "auto-update for .docs" ;;
+    ssh-multiplex)    echo "SSH connection multiplexing for github.com" ;;
     tmux-upgrade)     echo "tmux 3.5+ upgrade" ;;
     keychain)         echo "keychain (SSH agent manager)" ;;
     zsh-install)      echo "installing zsh" ;;
@@ -100,6 +101,10 @@ is_satisfied() {
         [ -f "$_rc" ] && grep -q 'DOCS_AUTO_UPDATE' "$_rc" && return 0
       done
       return 1 ;;
+    ssh-multiplex)
+      # User has set up multiplex (any ControlMaster line in ssh config) — or
+      # has it but for a non-github host. Either way, don't re-prompt.
+      [ -f "$HOME/.ssh/config" ] && grep -qE '^[[:space:]]*ControlMaster' "$HOME/.ssh/config" ;;
     tmux-upgrade)
       command -v tmux &>/dev/null || return 1
       _ver="$(tmux -V | awk '{print $2}')"
@@ -396,6 +401,67 @@ if [ -d "$_docs_repo/.git" ]; then
   unset _docs_autoupdate_configured _local_rc
 fi
 unset _docs_repo _docs_url
+
+# SSH connection multiplexing for github.com — keeps a control socket open
+# for ControlPersist (10m) so subsequent shell-startup fetches reuse the
+# already-established TLS/auth handshake. Cuts a warm fetch from ~1.5s to
+# ~0.5s. Only useful if at least one auto-update is enabled (otherwise no
+# fetches to amortize), so we gate the prompt on that.
+_ssh_mux_useful=false
+if [ -n "$DOTFILES_AUTO_UPDATE" ] || [ -n "$DOCS_AUTO_UPDATE" ]; then
+  _ssh_mux_useful=true
+else
+  for _local_rc in "$HOME/.zshrc.local" "$HOME/.bashrc.local"; do
+    if [ -f "$_local_rc" ] && grep -qE 'DOTFILES_AUTO_UPDATE|DOCS_AUTO_UPDATE' "$_local_rc"; then
+      _ssh_mux_useful=true
+      break
+    fi
+  done
+fi
+
+_ssh_config="$HOME/.ssh/config"
+_ssh_mux_configured=false
+if [ -f "$_ssh_config" ] && grep -qE '^[[:space:]]*ControlMaster' "$_ssh_config"; then
+  _ssh_mux_configured=true
+fi
+
+if [ "$_ssh_mux_useful" = false ]; then
+  : # no auto-update enabled; nothing to amortize
+elif [ "$_ssh_mux_configured" = true ]; then
+  skip_msg "SSH multiplexing already configured in $_ssh_config"
+elif was_declined ssh-multiplex; then
+  skip_msg "SSH multiplexing already declined"
+else
+  read -rp "${PROMPT_COLOR}Enable SSH multiplexing for github.com (faster auto-update fetches)? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _ssh_mux_answer
+  if [[ "$_ssh_mux_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Enabling SSH multiplexing...${RESET}"
+    mkdir -p "$HOME/.ssh/sockets"
+    chmod 700 "$HOME/.ssh/sockets"
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    if [ ! -f "$_ssh_config" ]; then
+      touch "$_ssh_config"
+      chmod 600 "$_ssh_config"
+    fi
+    # Append; ssh_config keyword precedence is "first match wins per keyword",
+    # so adding a Host github.com block at the end coexists with an existing
+    # Host * block above (different keywords).
+    cat >> "$_ssh_config" <<'EOF'
+
+# Added by dotfiles install.sh — speeds up shell-startup auto-update fetches.
+Host github.com
+  ControlMaster auto
+  ControlPath ~/.ssh/sockets/%C
+  ControlPersist 10m
+EOF
+    echo "Added Host github.com multiplex block to $_ssh_config"
+  else
+    record_decline ssh-multiplex
+    skip_msg "SSH multiplexing already declined"
+  fi
+  unset _ssh_mux_answer
+fi
+unset _ssh_mux_useful _ssh_mux_configured _ssh_config
 
 # Vim
 link "$DOTFILES/vimrc" "$HOME/.vimrc"

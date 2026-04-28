@@ -32,18 +32,25 @@ unset _old_name _old_path _new_path
 
 last_applied=$(cat "$TRACKER")
 
-# Find and run pending migrations in order
+# Find and run pending migrations in order. Per-migration output is
+# appended to .state/migrations.log so the auto-update notice stays at
+# one line per migration (a [migration] tag with ✓ / ✗); the log keeps
+# the full transcript for debugging when something goes sideways.
+MIGRATION_LOG="$STATE_DIR/migrations.log"
+
 for script in "$MIGRATIONS_DIR"/[0-9][0-9][0-9]-*.sh; do
   [ -f "$script" ] || continue
   num=$(basename "$script" | grep -oE '^[0-9]+')
   # Strip leading zeros for arithmetic comparison
   num=$((10#$num))
   if [ "$num" -gt "$last_applied" ]; then
-    echo "Running migration: $(basename "$script")"
-    if bash "$script"; then
+    name=$(basename "$script")
+    printf '\n=== %s @ %s ===\n' "$name" "$(date)" >> "$MIGRATION_LOG"
+    if bash "$script" >> "$MIGRATION_LOG" 2>&1; then
+      printf '\033[1;34m[migration]\033[0m %s \033[1;38;5;120m✓\033[0m\n' "$name"
       echo "$num" > "$TRACKER"
     else
-      echo "Migration failed: $(basename "$script")" >&2
+      printf '\033[1;34m[migration]\033[0m %s \033[1;38;5;210m✗\033[0m \033[38;5;240m(see %s)\033[0m\n' "$name" "$MIGRATION_LOG" >&2
       exit 1
     fi
   fi

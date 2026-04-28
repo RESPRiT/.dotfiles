@@ -54,8 +54,10 @@ elif [ -L "$OVERLAY" ]; then
 fi
 
 # 4. Run the merge so settings.json reflects base + overlay immediately.
+# --force: this migration runs unattended on first pull, and pre-existing
+# dest contents have already been backed up above (step 1) for triage.
 if command -v jq >/dev/null 2>&1; then
-  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh"
+  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" --force
   echo "[003] Generated $SETTINGS from base + overlay"
 else
   echo "[003] jq not installed; skipping merge — re-run install.sh to install jq and merge"

@@ -33,6 +33,10 @@
           {
             "type": "command",
             "command": "sh -c 'test -n \"$CLAUDE_EXIT_FILE\" && cat > \"$CLAUDE_EXIT_FILE\"'"
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-drift-check.sh\""
           }
         ]
       }

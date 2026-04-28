@@ -57,7 +57,9 @@ for script in "$MIGRATIONS_DIR"/[0-9][0-9][0-9]-*.sh; do
 done
 
 # Re-run the Claude settings merge in case the base changed in this pull.
-# Idempotent if not. Skip silently if jq is missing — install.sh handles that.
+# Idempotent if not. --force because post-merge is unattended (no agent in
+# the loop to reconcile drift); drift gets logged before being clobbered.
+# Skip silently if jq is missing — install.sh handles that.
 if command -v jq >/dev/null 2>&1 && [ -f "$DOTFILES/claude-global/settings.json" ]; then
-  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" 2>/dev/null || true
+  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" --force 2>/dev/null || true
 fi

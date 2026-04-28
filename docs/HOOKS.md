@@ -3,6 +3,7 @@ tracks:
   - claude-global/settings.json
   - claude-global/merge-settings.sh
   - claude-global/hooks/remerge-on-settings-edit.sh
+  - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc
@@ -12,7 +13,7 @@ tracks:
 
 # Claude Code hooks
 
-Claude Code hooks are declared in `claude-global/settings.json` (the canonical base) and merged into `~/.claude/settings.json` by `claude-global/merge-settings.sh`, which runs at install time, on `git pull` (via `hooks/post-merge`), and in-session whenever the base or overlay is edited (via `claude-global/hooks/remerge-on-settings-edit.sh`). Per-machine hook overrides go in `~/.claude/settings.local.json` — object arrays concat under the merge rules, so an overlay can add hooks without replacing the base list. See CLAUDE.md *Local override pattern* → "Claude Code settings (special case)" for the full merge semantics, including the drift-logging behavior for out-of-band edits to dest.
+Claude Code hooks are declared in `claude-global/settings.json` (the canonical base) and merged into `~/.claude/settings.json` by `claude-global/merge-settings.sh`. The merge script is non-destructive by default: clean cases propagate (no-ops, first-run writes, intentional base/overlay edits, cosmetic-only drift), out-of-band drift from Claude Code's own writers (`/plugin`, `/config`, `/permissions`, settings UI) is **auto-reconciled into the overlay** when expressible (additions, scalar overrides — verified by re-merging the candidate and comparing to dest), and only the residual case where overlay can't express the drift (typically a removal from a base array) exits 3 with a `DRIFT:` line on stderr. Three triggers re-run it: `install.sh` and `hooks/post-merge` (after `git pull`) pass `--force` because they're unattended (auto-reconcile still runs first; `--force` only matters for the residual case); the in-session `claude-global/hooks/remerge-on-settings-edit.sh` (PostToolUse on agent base/overlay edits) and `claude-global/hooks/session-start-drift-check.sh` (SessionStart) run without `--force`. Both hooks surface `RECONCILED:` and `DRIFT:` notices via `additionalContext` — the former so the user can catch accidental promotions (audit trail in `.state/claude-settings-reconcile.log`), the latter so the agent reconciles with the user. Per-machine hook overrides go in `~/.claude/settings.local.json` — object arrays concat under the merge rules, so an overlay can add hooks without replacing the base list. See CLAUDE.md *Local override pattern* → "Claude Code settings (special case)" for the full state machine.
 
 ## Resume-hint plumbing
 

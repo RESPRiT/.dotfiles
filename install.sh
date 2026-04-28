@@ -507,13 +507,11 @@ link_shell "$DOTFILES/claude-global/statusline-command.sh" \
   "$HOME/.claude/statusline-command.local.sh"
 
 if command -v jq &>/dev/null; then
-  _merge_rc=0
-  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" || _merge_rc=$?
-  case "$_merge_rc" in
-    0) echo "Merged Claude settings -> $HOME/.claude/settings.json" ;;
-    2) skip_msg "Claude settings already up to date" ;;
-  esac
-  unset _merge_rc
+  # --force: install.sh is unattended and needs to make forward progress.
+  # Drift (if any) is logged to .state/claude-settings-drift.log before
+  # being clobbered, so the next session's agent can review and promote.
+  DOTFILES_ROOT="$DOTFILES" bash "$DOTFILES/claude-global/merge-settings.sh" --force \
+    && echo "Merged Claude settings -> $HOME/.claude/settings.json"
 else
   skip_msg "Skipped Claude settings merge (jq not installed)"
 fi

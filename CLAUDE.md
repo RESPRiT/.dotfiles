@@ -5,6 +5,7 @@
 - `claude-global/` — Global Claude Code settings managed as dotfiles (symlinked to `~/.claude/`). This is where committed Claude settings live (e.g., `settings.local.json`).
 - `.claude/` — Project-local Claude Code settings for *this repo*. Not the same as the dotfiles that get symlinked to the home directory.
 - `hooks/` — Git hooks managed by the repo. `install.sh` symlinks these into `.git/hooks/`.
+- `lib/` — Sourceable shell libraries shared by `install.sh` and migrations. `colors.sh` exports the color constants; `helpers.sh` exposes the idempotent `link` / `link_shell` / `install_wrapper` / `install_bash_profile` helpers. Callers must define `$DOTFILES` first.
 - `migrations/` — Numbered migration scripts (e.g., `001-name.sh`) for handling breaking changes between repo versions.
 - `ghostty/` — Ghostty terminal config, symlinked to `~/.config/ghostty/`.
 - `powershell/` — PowerShell profile and Windows installer (`install.ps1`). Profile is symlinked to `$HOME\Documents\PowerShell\profile.ps1` ($PROFILE.CurrentUserAllHosts). Per-machine overrides live in `$HOME\Documents\PowerShell\profile.local.ps1`.
@@ -77,5 +78,6 @@ Breaking changes between repo versions are handled by numbered scripts in `migra
 - The post-merge hook exits early if no tracker exists, so cloning without running install.sh won't trigger migrations.
 - Both `install.sh` and `post-merge` will relocate legacy `~/.dotfiles-{migrated,decisions}` into `.state/` if found, so existing machines upgrade transparently.
 - Each migration script should be idempotent — check state before acting.
+- When a change to `install.sh` adds **dotfiles infrastructure** (a new symlink, wrapper, or seed file that every machine needs), pair it with a migration that backfills the same step on existing machines. The migration should source `lib/helpers.sh` and call the same helper (`link`, `link_shell`, `install_wrapper`, …) install.sh uses, so the two paths can't drift. Optional tools that the user opts into via prompt (rust, go, atuin, …) don't get migrations — those stay install-time-only. See `006-statusline-symlink.sh` for the canonical pattern.
 - Naming convention: `NNN-description.sh` (e.g., `001-claude-global-rename.sh`). New migration files must have the executable bit set (`chmod +x`). `post-merge` invokes them via `bash "$script"` so a missing bit won't break the run, but the convention is consistently exec-bit-on across the directory and a missing bit blocks direct invocation (`./migrations/NNN-foo.sh`) when testing.
 - Migrations are bash scripts (POSIX). On Windows, `install.ps1` seeds `.state/migrated` to the highest existing migration number so historical bash migrations don't run when `git pull` triggers `post-merge` via Git Bash. New migrations added later still run on Windows via Git Bash, so they should be written defensively (e.g., guard tmux/keychain steps with `command -v` checks) so they no-op cleanly on Windows.

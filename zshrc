@@ -41,6 +41,13 @@ setopt COMPLETE_ALIASES
 # Shift-tab to cycle backwards
 bindkey -M menuselect '^[[Z' reverse-menu-complete
 
+# Word-jump with Ctrl/Alt+Arrow. Bash gets these from /etc/inputrc; zsh has no
+# default binding for the xterm CSI-with-modifier sequences, so wire them up here.
+bindkey '^[[1;5C' forward-word    # Ctrl+Right
+bindkey '^[[1;5D' backward-word   # Ctrl+Left
+bindkey '^[[1;3C' forward-word    # Alt+Right
+bindkey '^[[1;3D' backward-word   # Alt+Left
+
 # atuin
 [ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
 command -v atuin &>/dev/null && eval "$(atuin init zsh)"

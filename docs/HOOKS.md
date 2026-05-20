@@ -4,6 +4,7 @@ tracks:
   - claude-global/merge-settings.sh
   - claude-global/hooks/remerge-on-settings-edit.sh
   - claude-global/hooks/session-start-drift-check.sh
+  - claude-global/hooks/session-start-tmux-rename.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc
@@ -35,7 +36,9 @@ The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>
 
 `SessionStart`, not `SessionEnd` — the latter empirically missed the `--resume` case, while `SessionStart` fires reliably for `claude -c`, `--resume`, `/clear`, and compact. The hook overwrites the file on each fire, so the captured session ID is always the most recent one (post-`/clear` or post-compact, if applicable).
 
-Because the hook lives in the committed base, fresh machines pick it up automatically the first time `merge-settings.sh` runs — no manual reproduction step.
+A sibling `SessionStart` hook (`claude-global/hooks/session-start-tmux-rename.sh`) reuses the same `CLAUDE_EXIT_FILE`-set signal to detect wrapper-launched tmux and renames the session from its placeholder `claude-$$` (shell PID) to `claude-<first 8 chars of session_id>`, so the real Claude id surfaces in tmux's session list and `choose-tree` picker. It re-fires on `/clear`, `/compact`, and `--resume` so the title always tracks the currently resumable id. Rename failures (8-char prefix collision with another wrapper session) are swallowed and the placeholder name stays.
+
+Because the hooks live in the committed base, fresh machines pick them up automatically the first time `merge-settings.sh` runs — no manual reproduction step.
 
 ## Docs-refs notifier
 

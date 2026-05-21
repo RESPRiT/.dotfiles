@@ -176,8 +176,29 @@ if cmp -s "$DEST" "$SNAPSHOT"; then
 fi
 
 # Case 5: dest ≠ snapshot AND projected ≠ dest → real drift.
-drift_diff=$(diff -u "$SNAPSHOT" "$DEST" 2>/dev/null || true)
+# Diff is computed on key-sorted JSON (jq -S) so cosmetic reordering by
+# Claude Code's writer doesn't show up as spurious +/- lines in the
+# logged diff or the surfaced _changed count. Case 5a still catches the
+# *pure* reorder case before we get here, but a mixed semantic+reorder
+# change would otherwise inflate the noise. Falls back to raw text on
+# either file if jq can't parse (corrupt JSON, etc.).
+_snap_sorted=$(mktemp "${TMPDIR:-/tmp}/claude-snap-sorted.XXXXXX")
+_dest_sorted=$(mktemp "${TMPDIR:-/tmp}/claude-dest-sorted.XXXXXX")
+jq -S . "$SNAPSHOT" > "$_snap_sorted" 2>/dev/null || cp "$SNAPSHOT" "$_snap_sorted"
+jq -S . "$DEST" > "$_dest_sorted" 2>/dev/null || cp "$DEST" "$_dest_sorted"
+drift_diff=$(diff -u --label snapshot --label dest "$_snap_sorted" "$_dest_sorted" 2>/dev/null || true)
+rm -f "$_snap_sorted" "$_dest_sorted"
 _changed=$(printf '%s\n' "$drift_diff" | grep -cE '^[-+][^-+]' || true)
+
+# Emit the drift diff after a notice line on stderr, framed by sentinels
+# so the calling hook can extract and surface it in additionalContext.
+# Unique markers (angle brackets) avoid colliding with anything that
+# could appear in a settings.json diff body.
+emit_diff_block() {
+  _kind="$1"  # RECONCILED or DRIFT
+  printf '>>>%s_DIFF_BEGIN<<<\n%s\n>>>%s_DIFF_END<<<\n' \
+    "$_kind" "$drift_diff" "$_kind" >&2
+}
 
 # Case 5a: cosmetic-only drift (key reordering by Claude Code's writer with
 # no semantic change). After deep-sorting keys, dest equals projected.
@@ -242,6 +263,7 @@ if jq -n --slurpfile base_arr "$BASE" --slurpfile dest_arr "$DEST" '
     chmod 600 "$SNAPSHOT" "$OVERLAY" 2>/dev/null || true
     rm -f "$tmp"
     echo "merge-settings.sh: RECONCILED: promoted ${_changed} drifted lines to $OVERLAY; entry appended to $RECONCILE_LOG (review and move to base if cross-machine, or revert via the log)" >&2
+    emit_diff_block RECONCILED
     exit 0
   fi
 fi
@@ -257,5 +279,6 @@ if [ "$FORCE" -eq 1 ]; then
 fi
 
 echo "merge-settings.sh: DRIFT: detected ${_changed} changed lines in $DEST that overlay can't express (likely removal from base). Edit base to reconcile, or pass --force to clobber." >&2
+emit_diff_block DRIFT
 rm -f "$tmp"
 exit 3

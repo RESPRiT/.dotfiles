@@ -23,13 +23,32 @@ notice_line=$(printf '%s\n' "$merge_err" | grep -E '^merge-settings\.sh: (DRIFT|
 [ -z "$notice_line" ] && exit 0
 
 case "$notice_line" in
-  *RECONCILED:*)
-    msg="[claude-settings] $notice_line. Out-of-band drift in ~/.claude/settings.json (likely /plugin, /config, /permissions, or settings UI between sessions) was auto-promoted to the overlay so the change keeps working. Mention this to the user briefly so accidental promotions can be caught — the audit entry is in ~/.dotfiles/.state/claude-settings-reconcile.log. If the change should apply across machines, move it from overlay to ~/.dotfiles/claude-global/settings.json (base)."
+  *RECONCILED:*) kind="RECONCILED" ;;
+  *DRIFT:*) kind="DRIFT" ;;
+esac
+
+# Extract the key-sorted diff body framed by sentinels in merge-settings.sh.
+diff_body=$(printf '%s\n' "$merge_err" | awk -v k="$kind" '
+  $0 == ">>>" k "_DIFF_BEGIN<<<" { cap=1; next }
+  $0 == ">>>" k "_DIFF_END<<<" { cap=0 }
+  cap
+')
+
+case "$kind" in
+  RECONCILED)
+    msg="[claude-settings] $notice_line. Out-of-band drift in ~/.claude/settings.json (likely /plugin, /config, /permissions, or settings UI between sessions) was auto-promoted to the overlay so the change keeps working. Mention this to the user briefly (with the diff below) so accidental promotions can be caught — the audit entry is in ~/.dotfiles/.state/claude-settings-reconcile.log. If the change should apply across machines, move it from overlay to ~/.dotfiles/claude-global/settings.json (base)."
     ;;
-  *DRIFT:*)
-    msg="[claude-settings] $notice_line. Auto-reconcile couldn't express the drift in overlay (overlay can only add/override, not remove base entries). Read the diff with: diff -u ~/.dotfiles/.state/claude-settings-last-merge.json ~/.claude/settings.json. Then ask the user whether to (a) edit base (committed dotfiles, confirm before editing) to match the desired state, or (b) DISCARD by running 'bash ~/.dotfiles/claude-global/merge-settings.sh --force' to clobber and log."
+  DRIFT)
+    msg="[claude-settings] $notice_line. Auto-reconcile couldn't express the drift in overlay (overlay can only add/override, not remove base entries). Ask the user whether to (a) edit base (committed dotfiles, confirm before editing) to match the desired state, or (b) DISCARD by running 'bash ~/.dotfiles/claude-global/merge-settings.sh --force' to clobber and log."
     ;;
 esac
+
+if [ -n "$diff_body" ]; then
+  msg="$msg
+
+Diff (key-sorted JSON; snapshot → dest):
+$diff_body"
+fi
 
 jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $m}}'
 exit 0

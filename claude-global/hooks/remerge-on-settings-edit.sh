@@ -30,13 +30,32 @@ case "$file_path" in
       notice_line=$(printf '%s\n' "$merge_err" | grep -E '^merge-settings\.sh: (DRIFT|RECONCILED):' | head -1)
       if [ -n "$notice_line" ]; then
         case "$notice_line" in
-          *RECONCILED:*)
-            msg="[claude-settings] $notice_line. Pre-existing drift was auto-promoted to overlay during the remerge of your base/overlay edit. Mention this briefly to the user so accidental promotions can be caught; audit entry is in ~/.dotfiles/.state/claude-settings-reconcile.log."
+          *RECONCILED:*) kind="RECONCILED" ;;
+          *DRIFT:*) kind="DRIFT" ;;
+        esac
+        # Extract the key-sorted diff body framed by sentinels in merge-settings.sh.
+        diff_body=$(printf '%s\n' "$merge_err" | awk -v k="$kind" '
+          $0 == ">>>" k "_DIFF_BEGIN<<<" { cap=1; next }
+          $0 == ">>>" k "_DIFF_END<<<" { cap=0 }
+          cap
+        ')
+
+        case "$kind" in
+          RECONCILED)
+            msg="[claude-settings] $notice_line. Pre-existing drift was auto-promoted to overlay during the remerge of your base/overlay edit. Mention this briefly to the user (with the diff below) so accidental promotions can be caught; audit entry is in ~/.dotfiles/.state/claude-settings-reconcile.log."
             ;;
-          *DRIFT:*)
-            msg="[claude-settings] $notice_line. Your edit to base/overlay did NOT propagate to ~/.claude/settings.json because dest has drift the overlay can't express (likely a base removal). Read the diff with: diff -u ~/.dotfiles/.state/claude-settings-last-merge.json ~/.claude/settings.json. Reconcile with the user: (a) edit base to match the desired state, or (b) DISCARD — run 'bash ~/.dotfiles/claude-global/merge-settings.sh --force' to clobber and log."
+          DRIFT)
+            msg="[claude-settings] $notice_line. Your edit to base/overlay did NOT propagate to ~/.claude/settings.json because dest has drift the overlay can't express (likely a base removal). Reconcile with the user: (a) edit base to match the desired state, or (b) DISCARD — run 'bash ~/.dotfiles/claude-global/merge-settings.sh --force' to clobber and log."
             ;;
         esac
+
+        if [ -n "$diff_body" ]; then
+          msg="$msg
+
+Diff (key-sorted JSON; snapshot → dest):
+$diff_body"
+        fi
+
         jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}'
       fi
     fi

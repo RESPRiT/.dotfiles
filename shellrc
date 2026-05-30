@@ -210,6 +210,15 @@ fi
 export CLICOLOR=1
 export LSCOLORS=Exfxcxdxcxegedabagaced
 
+# WSL: open links/files in the Windows host instead of a Linux GUI app.
+# Under WSLg the xdg defaults point at Linux apps, so a clicked hyperlink
+# opens e.g. Linux Chrome. wslview (from wslu) translates the path via
+# `wslpath -w` and hands off to the default Windows application; install.sh
+# also registers it as the xdg scheme/dir handler so terminal hyperlink
+# clicks route to Windows. The `command -v` guard makes this a no-op on
+# non-WSL machines (wslview only exists there).
+command -v wslview >/dev/null 2>&1 && export BROWSER=wslview
+
 alias ll='ls -la'
 alias l='ls -l'
 

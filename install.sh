@@ -69,6 +69,7 @@ decision_label() {
     zoxide)           echo "zoxide" ;;
     atuin-install)    echo "atuin" ;;
     atuin-login)      echo "atuin login / sync" ;;
+    wsl-open)         echo "wslview (open links/files in Windows)" ;;
     *)                echo "$1" ;;
   esac
 }
@@ -118,6 +119,13 @@ is_satisfied() {
     zoxide)         command -v zoxide &>/dev/null ;;
     atuin-install)  command -v atuin &>/dev/null ;;
     atuin-login)    [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/atuin/key" ] ;;
+    wsl-open)
+      # Satisfied once wslview is installed and a representative content type
+      # (text/plain) routes to it — mirrors the _wslview_ready check in the
+      # install step. text/plain (not x-scheme-handler/file) because file://
+      # clicks resolve by content type, so that's the meaningful signal.
+      command -v wslview &>/dev/null \
+        && [ "$(xdg-mime query default text/plain 2>/dev/null)" = "wslview.desktop" ] ;;
     *)              return 1 ;;
   esac
 }
@@ -672,6 +680,86 @@ else
     skip_msg "Atuin login already declined"
   fi
   unset _atuin_answer
+fi
+
+# WSL: route link/file clicks to the Windows host. Under WSLg the xdg
+# defaults point at Linux GUI apps, so a clicked file:// or http(s):// link
+# (or a folder open) lands in a Linux browser/file manager instead of the
+# native Windows app. wslu's `wslview` translates the path (wslpath -w) and
+# hands off to Windows; we install it and register it as the default handler.
+# WSL-only — the whole block no-ops elsewhere. shellrc separately exports
+# BROWSER=wslview (guarded by `command -v wslview`) for CLI tools.
+#
+# Note: xdg-open resolves a file:// link to a *regular file* by the file's
+# content MIME type, NOT the x-scheme-handler/file association — so making a
+# clicked file open Windows-side means mapping the content types, not just the
+# scheme. We map every concrete type in the shared-mime-info db (plus the web
+# schemes and folders), which is what "open everything in Windows" requires.
+# Trade-off: text files no longer open in terminal vim via a click; running
+# `vim file` directly is unaffected (this only touches xdg-open routing).
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  # Point wslview at the web/file schemes, folders, and every concrete MIME
+  # type the system knows about. Run in a subshell-style function so the
+  # positional-param accumulation (`set --`) can't leak to the script.
+  _wsl_register_handlers() {
+    command -v xdg-mime &>/dev/null || return 0
+    xdg-settings set default-web-browser wslview.desktop 2>/dev/null || true
+    local d media f sub
+    set --  # function-local positionals; does not touch the script's $@
+    for d in /usr/share/mime/*/; do
+      media=$(basename "$d")
+      case "$media" in
+        inode|x-content|x-scheme-handler|multipart|packages|icons) continue ;;
+      esac
+      for f in "$d"*.xml; do
+        [ -e "$f" ] || continue
+        sub=$(basename "$f" .xml)
+        set -- "$@" "$media/$sub"
+      done
+    done
+    xdg-mime default wslview.desktop \
+      x-scheme-handler/http x-scheme-handler/https \
+      x-scheme-handler/file inode/directory "$@" 2>/dev/null || true
+  }
+
+  # "Fully configured" signal: wslview present AND a representative content
+  # type (text/plain) already routes to it — proves the per-type mapping ran,
+  # not just the scheme handlers. Mirrored by is_satisfied(wsl-open) above.
+  _wslview_ready=false
+  if command -v wslview &>/dev/null \
+    && [ "$(xdg-mime query default text/plain 2>/dev/null)" = "wslview.desktop" ]; then
+    _wslview_ready=true
+  fi
+
+  if [ "$_wslview_ready" = true ]; then
+    skip_msg "wslview already installed and registered as the default handler for links/files"
+  elif was_declined wsl-open; then
+    skip_msg "wslview link redirection already declined"
+  else
+    read -rp "${PROMPT_COLOR}Route link/file clicks to Windows via wslview? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _wslview_answer
+    if [[ "$_wslview_answer" =~ ^[Yy]$ ]]; then
+      echo "${YES_COLOR}(Selected y) Setting up wslview...${RESET}"
+      if ! command -v wslview &>/dev/null; then
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update && sudo apt-get install -y wslu
+        else
+          echo "No apt-get found; install wslu manually (https://github.com/wslutilities/wslu)" >&2
+        fi
+      fi
+      if command -v wslview &>/dev/null && command -v xdg-mime &>/dev/null; then
+        _wsl_register_handlers
+        echo "Registered wslview as the default handler for web links, folders, and all file types"
+      else
+        echo "wslview or xdg-mime unavailable; skipped handler registration" >&2
+      fi
+    else
+      record_decline wsl-open
+      skip_msg "wslview link redirection already declined"
+    fi
+    unset _wslview_answer
+  fi
+  unset _wslview_ready
+  unset -f _wsl_register_handlers 2>/dev/null || true
 fi
 
 # Seed migration tracker if missing, then run any pending migrations

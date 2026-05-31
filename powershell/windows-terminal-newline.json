@@ -1,0 +1,7 @@
+{
+  "command": {
+    "action": "sendInput",
+    "input": "\u001b[13;2u"
+  },
+  "keys": "shift+enter"
+}

@@ -8,14 +8,14 @@
 - `lib/` — Sourceable shell libraries shared by `install.sh` and migrations. `colors.sh` exports the color constants; `helpers.sh` exposes the idempotent `link` / `link_shell` / `install_wrapper` / `install_bash_profile` helpers. Callers must define `$DOTFILES` first.
 - `migrations/` — Numbered migration scripts (e.g., `001-name.sh`) for handling breaking changes between repo versions.
 - `ghostty/` — Ghostty terminal config, symlinked to `~/.config/ghostty/`.
-- `powershell/` — PowerShell profile and Windows installer (`install.ps1`). Profile is symlinked to `$HOME\Documents\PowerShell\profile.ps1` ($PROFILE.CurrentUserAllHosts). Per-machine overrides live in `$HOME\Documents\PowerShell\profile.local.ps1`.
+- `powershell/` — PowerShell profile and Windows installer (`install.ps1`). Profile is symlinked to `$HOME\Documents\PowerShell\profile.ps1` ($PROFILE.CurrentUserAllHosts). Per-machine overrides live in `$HOME\Documents\PowerShell\profile.local.ps1`. Also holds `windows-terminal-newline.json`, the canonical Shift+Enter→newline keybinding that `install.ps1` injects into Windows Terminal's `settings.json` (see `docs/windows-terminal-shift-enter.md`).
 
 ## Installers
 
 Two installers, one per platform family. Both are idempotent (safe to re-run; already-correct symlinks are skipped, existing files are backed up) and share the same `.state/decisions` file.
 
 - **`install.sh`** (POSIX — Linux, macOS, WSL, Git Bash): symlinks the bash/zsh/vim/tmux/ghostty config into `$HOME`, installs CLI tools (rust, go, zoxide, atuin, keychain, tmux 3.5+), wires the post-merge git hook, and runs pending migrations.
-- **`powershell/install.ps1`** (Windows): symlinks `powershell/profile.ps1` into `$HOME\Documents\PowerShell\`, installs CLI tools via winget (zoxide, atuin, neovim, gh CLI, eza). Self-elevates via UAC because symlink creation requires admin (Developer Mode off). Does **not** run bash migrations — seeds `.state/migrated` to the current max so `post-merge` doesn't replay them when `git pull` is run from Git Bash on the same machine.
+- **`powershell/install.ps1`** (Windows): symlinks `powershell/profile.ps1` into `$HOME\Documents\PowerShell\`, installs CLI tools via winget (zoxide, atuin, neovim, gh CLI, eza), and injects the Shift+Enter→newline keybinding into Windows Terminal's `settings.json` (`Add-WTNewlineBinding`; surgical, idempotent, backs up first — see `docs/windows-terminal-shift-enter.md`). Self-elevates via UAC because symlink creation requires admin (Developer Mode off). Does **not** run bash migrations — seeds `.state/migrated` to the current max so `post-merge` doesn't replay them when `git pull` is run from Git Bash on the same machine.
 
 Machine-specific config goes in `~/.zshrc.local` / `~/.bashrc.local` (POSIX) or `$HOME\Documents\PowerShell\profile.local.ps1` (Windows). All are created automatically if missing.
 

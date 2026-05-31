@@ -162,6 +162,80 @@ Install-Winget -DisplayName 'neovim'  -Id 'Neovim.Neovim'      -DeclineKey 'neov
 Install-Winget -DisplayName 'gh CLI'  -Id 'GitHub.cli'         -DeclineKey 'gh'      -ProbeCommand 'gh'
 Install-Winget -DisplayName 'eza'     -Id 'eza-community.eza'  -DeclineKey 'eza'     -ProbeCommand 'eza'
 
+# === Windows Terminal: Shift+Enter -> newline ===
+# Windows Terminal sends a bare CR for Shift+Enter, byte-identical to Enter, so
+# REPLs like Claude Code can't tell them apart (microsoft/terminal#530). The fix
+# is a sendInput keybinding that emits CSI-u Shift+Enter (ESC [13;2u); inside
+# tmux, tmux.conf decodes that and forwards C-j (Claude's alternate newline).
+# This can't ship as a WT fragment because fragment actions can't bind keys, by
+# design (microsoft/terminal#17240) -- so we surgically insert the binding into
+# the user's settings.json, leaving the rest of the file untouched. The binding
+# is canonically defined in powershell/windows-terminal-newline.json.
+# See docs/windows-terminal-shift-enter.md.
+function Add-WTNewlineBinding([string]$BindingFile) {
+    if (-not (Test-Path -LiteralPath $BindingFile)) {
+        Write-Host "${NColor}$BindingFile missing; skipping WT newline binding${Reset}"
+        return
+    }
+    # Read the canonical binding and re-emit it as a compact one-liner. Round-
+    # tripping through ConvertFrom/To-Json re-escapes the ESC char, so the text
+    # we insert stays plain-ASCII and portable.
+    $binding = Get-Content -LiteralPath $BindingFile -Raw | ConvertFrom-Json
+    $compact = ConvertTo-Json $binding -Compress -Depth 5
+
+    $local = $env:LOCALAPPDATA
+    $candidates = @(
+        (Join-Path $local 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $local 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json'),
+        (Join-Path $local 'Microsoft\Windows Terminal\settings.json')
+    )
+    $found = $false
+    foreach ($path in $candidates) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $found = $true
+        $raw = Get-Content -LiteralPath $path -Raw
+
+        if ($raw -match '13;2u') {
+            Skip-Msg "WT newline binding already present in $path"
+            continue
+        }
+        if ($raw -match '"shift\+enter"') {
+            Write-Host "${NColor}$path already binds shift+enter to something else; leaving it alone (see docs/windows-terminal-shift-enter.md)${Reset}"
+            continue
+        }
+
+        # Surgical insert into the existing actions/keybindings array so the rest
+        # of settings.json (comments, formatting, key order) is preserved exactly.
+        $new = $null
+        foreach ($key in @('actions','keybindings')) {
+            $empty = [regex]("`"$key`"\s*:\s*\[\s*\]")
+            $open  = [regex]("(`"$key`"\s*:\s*\[)")
+            if ($empty.IsMatch($raw)) {
+                $new = $empty.Replace($raw, "`"$key`": [`n        $compact`n    ]", 1)
+                break
+            } elseif ($open.IsMatch($raw)) {
+                $new = $open.Replace($raw, "`$1`n        $compact,", 1)
+                break
+            }
+        }
+        if ($null -eq $new) {
+            # No actions/keybindings array -- add one after the root opening brace.
+            $new = ([regex]'\{').Replace($raw, "{`n    `"actions`": [$compact],", 1)
+        }
+
+        $bak = "$path.dotfiles-$(Get-Date -Format yyyyMMddHHmmss).bak"
+        Copy-Item -LiteralPath $path -Destination $bak
+        # UTF-8 without BOM (WT reads UTF-8; avoids leaving a stray BOM behind).
+        [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "Added Shift+Enter newline binding to $path (backup: $bak)"
+    }
+    if (-not $found) {
+        Skip-Msg "Windows Terminal settings.json not found; skipping newline binding"
+    }
+}
+
+Add-WTNewlineBinding (Join-Path $Dotfiles 'powershell\windows-terminal-newline.json')
+
 # === Seed migration tracker so post-merge.sh doesn't replay old migrations
 # the first time someone pulls on a fresh Windows clone. We don't run the
 # bash migrations from here — they're POSIX and most aren't relevant on

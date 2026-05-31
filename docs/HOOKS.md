@@ -5,6 +5,7 @@ tracks:
   - claude-global/hooks/remerge-on-settings-edit.sh
   - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/session-start-tmux-rename.sh
+  - claude-global/hooks/user-prompt-terminal-size.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc
@@ -39,6 +40,18 @@ The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>
 A sibling `SessionStart` hook (`claude-global/hooks/session-start-tmux-rename.sh`) reuses the same `CLAUDE_EXIT_FILE`-set signal to detect wrapper-launched tmux and renames the session from its placeholder `claude-$$` (shell PID) to `claude-<first 8 chars of session_id>`, so the real Claude id surfaces in tmux's session list and `choose-tree` picker. It re-fires on `/clear`, `/compact`, and `--resume` so the title always tracks the currently resumable id. Rename failures (8-char prefix collision with another wrapper session) are swallowed and the placeholder name stays.
 
 Because the hooks live in the committed base, fresh machines pick them up automatically the first time `merge-settings.sh` runs — no manual reproduction step.
+
+## Terminal-fit hint
+
+A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-terminal-size.sh`) measures the current terminal via tmux and emits a recommended line/word budget for the assistant's end-of-turn message, so the final user-facing reply fits the visible window without scrolling. `UserPromptSubmit` stdout is injected into the turn's context, so the echoed text becomes guidance the model sees.
+
+It measures the pane Claude renders into — `tmux display-message -p -t "$TMUX_PANE" '#{pane_width} #{pane_height}'` — rather than the client, since the pane is the area Claude actually paints.
+
+**Rendered lines is the governing constraint, words are secondary.** `avail_lines = rows − CLAUDE_TERM_FIT_RESERVED_ROWS` (default 10). The reserved count covers the TUI chrome — input box (3 rows: two borders + the input line), status line, mode hint, the `✻ Crunched for Xs` completion stat line, and surrounding blanks — measured empirically with `tmux capture-pane -p` (the fixed bottom chrome is 5 rows; the input box grows by a row per wrapped line of the user's typed prompt, which the static reserve can't predict, hence a couple rows of margin). The hint states `avail_lines` as a *rendered*-line limit, explicitly counting the blank lines markdown inserts between paragraphs and list items — a reply can sit at its word budget yet overflow because airy formatting spends rows on whitespace.
+
+The word figure is a softer sanity check: `avail_lines × ((cols − CLAUDE_TERM_FIT_GUTTER_COLS) / CLAUDE_TERM_FIT_CHARS_PER_WORD) × CLAUDE_TERM_FIT_FILL_PCT / 100`. Defaults: gutter 2 (the TUI's left content indent), 6 chars per word incl. trailing space, fill 55% (the fraction of a line real markdown fills after blanks/short lines — the original full-packing assumption over-permitted, e.g. a 510-word reply rendering to ~50 rows against a 35-line budget). All tunables are read from the environment, so a machine with different chrome can override via shell or settings `env` without forking the script.
+
+Guards: no-op (exit 0, no output) when `$TMUX` is unset or `tmux` is absent — outside tmux there's no reliable size to report — and also if tmux returns non-numeric dimensions. The budget is framed as a soft target for the final reply only (not tool output or intermediate steps), explicitly overridable when the task needs more.
 
 ## Docs-refs notifier
 

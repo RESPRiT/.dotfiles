@@ -51,6 +51,8 @@ It measures the pane Claude renders into — `tmux display-message -p -t "$TMUX_
 
 The word figure is a softer sanity check: `avail_lines × ((cols − CLAUDE_TERM_FIT_GUTTER_COLS) / CLAUDE_TERM_FIT_CHARS_PER_WORD) × CLAUDE_TERM_FIT_FILL_PCT / 100`. Defaults: gutter 2 (the TUI's left content indent), 6 chars per word incl. trailing space, fill 55% (the fraction of a line real markdown fills after blanks/short lines — the original full-packing assumption over-permitted, e.g. a 510-word reply rendering to ~50 rows against a 35-line budget). All tunables are read from the environment, so a machine with different chrome can override via shell or settings `env` without forking the script.
 
+**Verbosity (full once, compact after).** The first prompt of a session emits a full message explaining what the hint is and how to read the compact form; every prompt after emits a self-describing one-liner (`term-fit: 87x45 -> final reply <=35 rendered lines (~269 words); …`), kept self-describing so it still reads correctly if context compaction drops the preamble. "First" is tracked per session via a marker file `${TMPDIR:-/tmp}/claude-term-fit-<session_id>.seen` — same `$TMPDIR`/session-id pattern as the docs-refs notifier. `session_id` is parsed from the stdin payload without jq; if it can't be parsed the hook falls back to the compact form rather than re-explaining every turn.
+
 Guards: no-op (exit 0, no output) when `$TMUX` is unset or `tmux` is absent — outside tmux there's no reliable size to report — and also if tmux returns non-numeric dimensions. The budget is framed as a soft target for the final reply only (not tool output or intermediate steps), explicitly overridable when the task needs more.
 
 ## Docs-refs notifier

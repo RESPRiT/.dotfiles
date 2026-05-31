@@ -9,6 +9,13 @@
 # formatting spends rows on whitespace, so lines lead and words are a softer
 # secondary sanity check (scaled by a fill factor, below).
 #
+# Verbosity: the first prompt of a session gets a full message that explains
+# what the hint is and how to read the compact form; every prompt after that
+# gets the compact one-liner (still self-describing enough to survive context
+# compaction losing the preamble). "First" is tracked per session via a marker
+# file in $TMPDIR keyed on session_id; if session_id can't be parsed we fall
+# back to the compact form rather than re-explaining every turn.
+#
 # stdout from a UserPromptSubmit hook is injected into the model's context for
 # the turn, so everything echoed below becomes guidance the assistant sees.
 #
@@ -30,6 +37,12 @@
 
 [ -n "$TMUX" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
+
+# Read session_id from the JSON payload on stdin (no jq, for portability).
+# Each UserPromptSubmit hook gets its own copy of the payload.
+sid=$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+# Keep only filename-safe characters.
+sid=$(printf '%s' "$sid" | tr -cd 'A-Za-z0-9._-')
 
 # Measure the pane Claude is rendering into. $TMUX_PANE is exported by tmux for
 # the current pane; falls back to the active pane if somehow unset.
@@ -58,12 +71,41 @@ usable_cols=$((cols - gutter))
 words_per_line=$((usable_cols / cpw))
 max_words=$((avail_lines * words_per_line * fill / 100))
 
-printf 'Terminal window (via tmux): %sx%s (cols x rows).\n' "$cols" "$rows"
-printf 'Keep your final end-of-turn message within ~%s rendered lines so it ' "$avail_lines"
-printf 'fits without the user scrolling. Rendered lines is the hard limit: '
-printf 'count the blank lines markdown inserts between paragraphs and list '
-printf 'items, not just lines of text. As a secondary check, that is roughly '
-printf '~%s words at this width. This governs the final reply only, not tool ' "$max_words"
-printf 'output or intermediate steps; exceed it when the task genuinely needs '
-printf 'more, but prefer concision, dense formatting, and trimming anything '
-printf 'that does not earn its row.\n'
+# Decide full vs compact. First prompt of a session (no marker yet) → full.
+full=1
+if [ -n "$sid" ]; then
+  marker="${TMPDIR:-/tmp}/claude-term-fit-${sid}.seen"
+  if [ -f "$marker" ]; then
+    full=0
+  else
+    : > "$marker" 2>/dev/null || true
+  fi
+else
+  # No session_id to dedupe on — don't re-explain every turn.
+  full=0
+fi
+
+# Compact form, repeated each turn. Self-describing so it still reads correctly
+# if the full preamble is lost to compaction.
+compact() {
+  printf 'term-fit: %sx%s -> final reply <=%s rendered lines (~%s words); ' \
+    "$cols" "$rows" "$avail_lines" "$max_words"
+  printf 'rendered lines (incl. blank lines between paragraphs/list items) is the primary limit.\n'
+}
+
+if [ "$full" -eq 1 ]; then
+  printf 'Terminal-fit hint (via tmux): each turn reports the current pane size '
+  printf 'and a budget for the final end-of-turn reply, so it fits in the visible '
+  printf 'window without scrolling.\n'
+  printf 'Terminal window: %sx%s (cols x rows). Keep the final reply within ' "$cols" "$rows"
+  printf '~%s RENDERED lines — the primary constraint, counting the blank lines ' "$avail_lines"
+  printf 'markdown inserts between paragraphs and list items, not just lines of '
+  printf 'text. Secondary check: ~%s words at this width. Applies to the final ' "$max_words"
+  printf 'reply only, not tool output or intermediate steps; exceeding it is fine '
+  printf 'when the task genuinely needs more, but prefer concision, dense '
+  printf 'formatting, and trimming anything that does not earn its row.\n'
+  printf 'Later turns report this compactly as: '
+  compact
+else
+  compact
+fi

@@ -28,13 +28,20 @@ if [ -n "$branch" ] && [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ];
 fi
 
 LIGHT_BLUE="\033[38;5;117m"
+SSH_GREEN="\033[38;5;114m"
 RED="\033[38;5;210m"
 GREEN="\033[32m"
 PINK="\033[38;5;218m"
 DIM="\033[2m"
 RESET="\033[0m"
 
-user_host="${LIGHT_BLUE}$(whoami)@$(hostname -s)${RESET}"
+# Match the shell prompt: green over SSH, light blue locally.
+if [ -n "$SSH_CONNECTION" ]; then
+  host_color="$SSH_GREEN"
+else
+  host_color="$LIGHT_BLUE"
+fi
+user_host="${host_color}$(whoami)@$(hostname -s)${RESET}"
 dir_part=" ${short_dir}"
 
 if [ -n "$branch" ]; then

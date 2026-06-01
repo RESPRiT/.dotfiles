@@ -6,6 +6,7 @@ tracks:
   - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/session-start-tmux-rename.sh
   - claude-global/hooks/user-prompt-terminal-size.sh
+  - claude-global/hooks/user-prompt-git-remote.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc
@@ -54,6 +55,18 @@ The word figure is a softer sanity check: `avail_lines × ((cols − CLAUDE_TERM
 **Verbosity (full once, compact after).** The first prompt of a session emits a full message explaining what the hint is and how to read the compact form; every prompt after emits a self-describing one-liner (`term-fit: 87x45 -> final reply <=35 rendered lines (~269 words); …`), kept self-describing so it still reads correctly if context compaction drops the preamble. "First" is tracked per session via a marker file `${TMPDIR:-/tmp}/claude-term-fit-<session_id>.seen` — same `$TMPDIR`/session-id pattern as the docs-refs notifier. `session_id` is parsed from the stdin payload without jq; if it can't be parsed the hook falls back to the compact form rather than re-explaining every turn.
 
 Guards: no-op (exit 0, no output) when `$TMUX` is unset or `tmux` is absent — outside tmux there's no reliable size to report — and also if tmux returns non-numeric dimensions. The budget is framed as a soft target for the final reply only (not tool output or intermediate steps), explicitly overridable when the task needs more.
+
+## Git remote-status hint
+
+A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-git-remote.sh`) keeps the session's repo aware of remote state, so the assistant doesn't assume the local branch (or `main`) is current when it has fallen behind `origin`. Each turn it (a) fires a throttled `git fetch` for the repo the session's `cwd` lives in, and (b) reads the now-cached remote-tracking refs and, **only when behind/diverged**, injects a one-line summary (`git: local main is 5 commits behind origin/main …`) into the turn's context. `git fetch` only updates remote-tracking refs — never the working tree, index, or current branch — so it's safe to run against any repo unprompted. This is the agent-facing half of the design; the shell prompt and statusline are intentionally left untouched for now.
+
+**Throttle.** The fetch runs at most once per `CLAUDE_GIT_FETCH_TTL_MIN` minutes (default 5), gated by the mtime of a stamp file in the repo's *common* git dir (`<common>/.last-autofetch`). The stamp is `touch`ed **before** the fetch so a slow/flaky network can't make every turn re-fetch (a failed fetch still costs only one attempt per interval), and so sibling worktrees of the same repo share one gate — their remote-tracking refs are shared, so a single fetch serves them all. Staleness is tested with `find "$stamp" -mmin +N`, which both BSD (macOS) and GNU `find` support.
+
+**Timing.** On the turn the throttle opens, the fetch runs **inline** under a short cap (`CLAUDE_GIT_FETCH_TIMEOUT`, default 3s, via the same `timeout`→`gtimeout`→`perl alarm` chain as shellrc's `_with_timeout`, inlined since the hook doesn't source shellrc) so the reported numbers are fresh from the first message. Every other turn reads cached refs with no network and near-zero latency.
+
+**Worktrees.** `cwd` may be a linked worktree, where `.git` is a file, not a directory. The repo is resolved via `git -C "$cwd"` and the stamp via `--git-common-dir` (made absolute), so both the throttle and the report work from the main checkout or any worktree. `main` vs `origin/main` is readable from a worktree on a feature branch because those refs are shared — which is exactly the "on a feature branch, assumed main was current" blind spot this addresses.
+
+**What it reports.** Current branch vs its upstream (`rev-list --left-right --count HEAD...@{u}`): `N behind`, or `N ahead, M behind` when diverged; ahead-only is silent. Separately, `<default> vs origin/<default>` (default branch from `origin/HEAD`, falling back to `main` then `master`) is reported **only when not already on the default branch** — otherwise the upstream check already covered it. Guards → silent no-op (exit 0): git unavailable, `cwd` missing/not a work tree, detached HEAD or no upstream (for the branch clause), and up-to-date.
 
 ## Docs-refs notifier
 

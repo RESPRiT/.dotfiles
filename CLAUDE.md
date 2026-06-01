@@ -1,5 +1,9 @@
 # Dotfiles
 
+## Repo conventions
+
+This is a **solo-developer repo** — there's no review workflow and no shared `main` to protect. Commit directly to `main` and push; don't branch or open PRs for routine changes (the default "branch before committing on main" rule does not apply here). Still write clear commit messages and keep commits scoped.
+
 ## Directory structure
 
 - `claude-global/` — Global Claude Code settings managed as dotfiles (symlinked to `~/.claude/`). This is where committed Claude settings live (e.g., `settings.local.json`).

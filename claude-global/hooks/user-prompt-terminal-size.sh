@@ -32,6 +32,27 @@ sid=$(grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/
 # Keep only filename-safe characters.
 sid=$(printf '%s' "$sid" | tr -cd 'A-Za-z0-9._-')
 
+# Read-only overflow heads-up from last turn. The Stop hook (stop-terminal-size.py)
+# drops a marker with "used avail cols rows" when the previous reply overran the
+# budget; surface it once here (UserPromptSubmit stdout is injected as context the
+# agent can read and freely ignore), then consume it. Printed before the budget
+# bail and self-contained from the stored numbers, so it shows even if this turn
+# can't measure (e.g. not in tmux now). Stays silent when there's no overflow.
+if [ -n "$sid" ]; then
+  warn="${TMPDIR:-/tmp}/claude-term-fit-overflow-${sid}.warn"
+  if [ -f "$warn" ]; then
+    set -- $(cat "$warn" 2>/dev/null)
+    rm -f "$warn" 2>/dev/null || true
+    if [ "$#" -ge 4 ]; then
+      over=$(( $1 - $2 ))
+      printf 'term-fit warning: your previous reply ran ~%s rendered lines vs the ' "$1"
+      printf '%s-line budget (%sx%s) — over by ~%s. Read-only heads-up: aim to fit ' "$2" "$3" "$4" "$over"
+      printf 'the window, but ignore this if that turn genuinely warranted the length '
+      printf '(e.g. the user asked for depth or the task needed it).\n'
+    fi
+  fi
+fi
+
 # Measure + compute the budget via the shared helper (single source of truth).
 # Prints nothing when not measurable (no tmux); bail in that case.
 set -- $(sh "$(dirname "$0")/term-fit-budget.sh")

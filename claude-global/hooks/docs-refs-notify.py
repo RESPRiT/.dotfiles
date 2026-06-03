@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 """
 PostToolUse hook for Edit|Write|MultiEdit. Reads the tool-call payload from
-stdin and emits up to two diagnostics as a single
-`hookSpecificOutput.additionalContext` message:
+stdin and, if other markdown docs `tracks:` the touched file and their mtime
+is older than the file's, lists them as a single
+`hookSpecificOutput.additionalContext` message so the agent can decide whether
+to update them (or delegate to a haiku subagent).
 
-  1. Stale docs: if other markdown docs `tracks:` the touched file and their
-     mtime is older than the file's, list them so the agent can decide
-     whether to update them (or delegate to a haiku subagent).
-  2. Missing tracks: if the touched file is itself a markdown doc inside a
-     scan dir but has no `tracks:` frontmatter block, point that out so the
-     doc opts back into the reference system.
+`tracks:` is optional: a doc with no `tracks:` block simply opts out of the
+reference system and is never flagged for the omission.
 
 Filters applied before notifying:
-  - mtime gate (stale-docs only): skip docs whose mtime is >= the touched
-    file's mtime — the doc was updated at/after the change, so not stale.
+  - mtime gate: skip docs whose mtime is >= the touched file's mtime — the doc
+    was updated at/after the change, so not stale.
   - session dedupe: a state file at ${TMPDIR}/claude-docs-refs-<sid>.notified
-    holds keys we've already raised. Stale-doc keys are
-    `<doc>|<file>|<doc_mtime>` (re-fires when the doc's mtime advances after
-    a presumed fix). Missing-tracks keys are `notracks|<doc>` (one nag per
-    doc per session, regardless of subsequent edits).
+    holds keys we've already raised, as `<doc>|<file>|<doc_mtime>` (re-fires
+    when the doc's mtime advances after a presumed fix).
 
 Wired up via the PostToolUse Edit|Write|MultiEdit matcher in
 claude-global/settings.json.
@@ -34,29 +30,6 @@ import tempfile
 from pathlib import Path
 
 SCANNER = Path(__file__).parent / "docs-refs.py"
-
-
-def scan_dirs(cwd: str) -> list[Path]:
-    """Mirror docs-refs.default_dirs() — used to decide whether the touched
-    file is itself a doc that should declare tracks."""
-    out: list[Path] = []
-    cwd_docs = Path(cwd) / "docs"
-    if cwd_docs.is_dir():
-        out.append(cwd_docs.resolve())
-    home_docs = Path.home() / ".docs"
-    if home_docs.is_dir():
-        out.append(home_docs.resolve())
-    return out
-
-
-def is_under(file: Path, dirs: list[Path]) -> bool:
-    for d in dirs:
-        try:
-            file.relative_to(d)
-            return True
-        except ValueError:
-            continue
-    return False
 
 
 def emit_context(message: str) -> None:
@@ -107,29 +80,7 @@ def main() -> int:
     sections: list[str] = []
     new_keys: list[str] = []
 
-    # Check 1: touched file is itself a doc inside a scan dir but lacks tracks:.
-    dirs = scan_dirs(cwd)
-    if abs_file.suffix == ".md" and is_under(abs_file, dirs):
-        notracks_key = f"notracks|{abs_file}"
-        if notracks_key not in seen:
-            try:
-                ht = subprocess.run(
-                    ["python3", str(SCANNER), "has-tracks", str(abs_file)],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if ht.returncode != 0:
-                    sections.append(
-                        f"[docs-refs] {abs_file} is missing a `tracks:` frontmatter "
-                        f"block, so the docs-refs notifier won't surface this doc when "
-                        f"its dependencies change. Add a YAML frontmatter listing the "
-                        f"files/directories this doc covers — see docs/HOOKS.md "
-                        f"§ Docs-refs notifier for the format."
-                    )
-                    new_keys.append(notracks_key)
-            except (subprocess.SubprocessError, OSError):
-                pass
-
-    # Check 2: other docs that track abs_file and may now be stale.
+    # Other docs that track abs_file and may now be stale.
     try:
         proc = subprocess.run(
             ["python3", str(SCANNER), "for-file", str(abs_file), "--quiet"],

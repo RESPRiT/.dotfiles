@@ -60,7 +60,7 @@ Guards: no-op (exit 0, no output) when `$TMUX` is unset or `tmux` is absent — 
 
 **Post-turn check (the read-only warning).** The hint above is advisory — the model can still overshoot. `claude-global/hooks/stop-terminal-size.py` is the `Stop` counterpart: when the turn ends it reads the transcript, finds the turn's final reply, estimates its rendered line count (each source line costs ≥1 row; long lines add a row per soft wrap at `usable_cols`; blank lines count, mirroring the "rendered lines" notion), and compares against `avail_lines` from the same helper.
 
-Getting "the final reply" is subtler than it looks because of a **flush race**: a `Stop` hook can fire before the turn's last assistant message is written to the transcript, so the last entry at that instant is still the *pre-tool-call* text (which carries a `tool_use` block) — naively reading "the last text block" measures the wrong, earlier message (observed: a 41-line reply read as 1 line). `final_reply_text()` defends against this by polling (up to 2s, 50ms steps) until the last assistant entry is text-bearing **and** free of `tool_use` — i.e. a terminal reply — then measuring that. Turns that legitimately end on a tool call never satisfy the gate and fall through to "no reply to measure" at timeout, which is correct (nothing user-facing to warn about). See `~/.docs/claude/hooks.md` for the general lesson.
+Getting "the final reply" is subtler than it looks because of a **flush race**: a `Stop` hook can fire before the turn's last assistant message is written to the transcript, so the last entry at that instant is still the *pre-tool-call* text (which carries a `tool_use` block) — naively reading "the last text block" measures the wrong, earlier message (observed: a 41-line reply read as 1 line). `final_reply_text()` defends against this by polling (up to 2s, 50ms steps) until the last assistant entry is text-bearing **and** free of `tool_use` — i.e. a terminal reply — then measuring that. Turns that legitimately end on a tool call never satisfy the gate and fall through to "no reply to measure" at timeout, which is correct (nothing user-facing to warn about). See `~/.docs/claude/HOOK_BEHAVIOR.md` for the general lesson.
 
 The warning is deliberately **read-only**, which dictates a two-hook handoff rather than acting at `Stop` time. A `Stop` hook can only reach the model via `{"decision":"block",…}`, and blocking *forces a revision that appends more text below the already-painted reply* — it can't retract what's on screen, so for a "fits the window" goal a block can make the turn longer, not shorter. To stay non-coercive, the Stop hook instead writes a marker file `${TMPDIR:-/tmp}/claude-term-fit-overflow-<session_id>.warn` containing `used avail cols rows` (and emits nothing). The **next** `UserPromptSubmit` (in `user-prompt-terminal-size.sh`, before the budget bail so it shows even if that turn can't measure) reads the marker, prints a one-line heads-up — `term-fit warning: your previous reply ran ~79 rendered lines vs the 30-line budget (158x40) — over by ~49. … ignore this if that turn genuinely warranted the length` — and deletes it (consume-once). Because `UserPromptSubmit` stdout is injected as plain turn context, the agent simply *sees* the warning and may freely ignore it for a justified one-off; nothing is forced, and no extra text is appended to the offending turn.
 
@@ -80,10 +80,11 @@ A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-git-remote.sh`) keep
 
 ## Docs-refs notifier
 
-A `PostToolUse` hook on `Edit|Write|MultiEdit` (`claude-global/hooks/docs-refs-notify.py`) emits up to two diagnostics as a single `hookSpecificOutput.additionalContext` message:
+A `PostToolUse` hook on `Edit|Write|MultiEdit` (`claude-global/hooks/docs-refs-notify.py`) emits one diagnostic as a `hookSpecificOutput.additionalContext` message:
 
-1. **Stale docs** — other markdown docs whose `tracks:` block names the touched file (or a directory containing it) and whose mtime is older than the file's. The agent decides whether the change actually warrants a doc edit; most won't, and the cheap-glance / expensive-delegate split keeps cost down vs. running a Haiku on every edit.
-2. **Missing `tracks:`** — if the touched file is itself a markdown doc inside a scan dir but has no `tracks:` frontmatter, point at `docs/HOOKS.md` and ask the agent to add one. Without it the doc opts out of stale-detection silently, which is the failure mode that motivated the explicit-only design.
+- **Stale docs** — other markdown docs whose `tracks:` block names the touched file (or a directory containing it) and whose mtime is older than the file's. The agent decides whether the change actually warrants a doc edit; most won't, and the cheap-glance / expensive-delegate split keeps cost down vs. running a Haiku on every edit.
+
+`tracks:` is **optional**: a doc with no `tracks:` block simply opts out of stale-detection and is never flagged for the omission — a general-knowledge note that legitimately tracks no repo file shouldn't be nagged into declaring fake dependencies. (An earlier version also nagged when a touched markdown doc under a scan dir lacked `tracks:`; that was removed.)
 
 **Reference declaration** (`claude-global/hooks/docs-refs.py`): each doc declares the files and directories it covers via a YAML frontmatter `tracks:` block. Inline (`tracks: [a, b]`) and block (`tracks:\n  - a\n  - b`) forms are both accepted. An earlier version also auto-extracted backtick-quoted tokens from the body, but generic terms like `` `docs/` `` resolved to existing directories and matched every sibling file, so that was removed in favor of explicit declaration.
 
@@ -93,11 +94,11 @@ Resolution attempts per entry, in order: absolute (after `~`-expansion), then re
 
 **Filters before notifying:**
 
-- *mtime gate* (stale-docs only): skip docs whose mtime is `>=` the touched file's mtime. The doc is at least as fresh as the change, so it's not stale by definition.
-- *session dedupe*: keep a state file at `${TMPDIR}/claude-docs-refs-<session_id>.notified`. Stale-doc keys are `<doc>|<file>|<doc_mtime>` — repeated edits to the same file don't re-nag *unless* the doc's mtime has advanced (i.e., the agent updated the doc, then changed the file again — in which case re-notify is correct). Missing-`tracks:` keys are `notracks|<doc>` — one nag per doc per session, regardless of subsequent edits or whether the agent eventually adds the block.
+- *mtime gate*: skip docs whose mtime is `>=` the touched file's mtime. The doc is at least as fresh as the change, so it's not stale by definition.
+- *session dedupe*: keep a state file at `${TMPDIR}/claude-docs-refs-<session_id>.notified`. Stale-doc keys are `<doc>|<file>|<doc_mtime>` — repeated edits to the same file don't re-nag *unless* the doc's mtime has advanced (i.e., the agent updated the doc, then changed the file again — in which case re-notify is correct).
 
 **Limitations:**
 
 - Only fires on `Edit|Write|MultiEdit`. File mutations via `Bash` (`mv`, `sed -i`, code generators, etc.) are not currently observed.
 - Directory references match any file under them, but symlink traversal beyond `Path.resolve()` is not specially handled.
-- A doc that forgets its `tracks:` block won't be flagged for any change, which is a sharper edge than the old auto-discover behavior — the tradeoff is no false positives.
+- A doc with no `tracks:` block is never surfaced — by design (`tracks:` is opt-in), and with no nag, so the omission is silent whether deliberate or forgotten. The tradeoff is no false positives.

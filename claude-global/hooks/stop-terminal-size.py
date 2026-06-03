@@ -28,6 +28,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 
 
 def marker_path(sid):
@@ -53,18 +54,19 @@ def load_budget():
     return avail_lines, usable_cols, cols, rows
 
 
-def last_reply_text(transcript_path):
-    """Concatenated text blocks of the final assistant message in the transcript.
+def last_assistant_entry(transcript_path):
+    """Return (text, has_tool_use) for the final assistant entry in the transcript.
 
-    A turn can have several assistant events (text interleaved with tool_use);
-    the user-facing reply is the text of the LAST assistant message, so we scan
-    from the end for the first assistant entry that carries any text block.
+    `text` is the concatenated text blocks (None if the entry carries no text);
+    `has_tool_use` is True when that entry also contains a tool_use block, which
+    means the turn isn't finished — more is coming after the pending tool result.
+    Returns (None, False) if the transcript is unreadable or has no assistant yet.
     """
     try:
         with open(transcript_path, encoding="utf-8") as f:
             lines = f.readlines()
     except OSError:
-        return None
+        return None, False
     for raw in reversed(lines):
         raw = raw.strip()
         if not raw:
@@ -77,15 +79,38 @@ def last_reply_text(transcript_path):
             continue
         content = entry.get("message", {}).get("content", [])
         if isinstance(content, str):
-            return content
+            return content, False
         texts = [
             b.get("text", "")
             for b in content
             if isinstance(b, dict) and b.get("type") == "text"
         ]
-        if any(t.strip() for t in texts):
-            return "\n".join(texts)
-    return None
+        has_tool = any(
+            isinstance(b, dict) and b.get("type") == "tool_use" for b in content
+        )
+        text = "\n".join(texts) if any(t.strip() for t in texts) else None
+        return text, has_tool
+    return None, False
+
+
+def final_reply_text(transcript_path, max_wait=2.0, step=0.05):
+    """Text of the turn's final user-facing reply, waiting out the flush race.
+
+    A Stop hook can fire before the turn's last assistant message is flushed to
+    the transcript — at that instant the last entry is still the pre-tool-call
+    text (which carries a tool_use block), so naively reading "the last text"
+    measures the wrong, earlier message. We poll until the last assistant entry
+    is text-bearing AND free of tool_use (i.e. a terminal reply), or until the
+    deadline. Turns that legitimately end on a tool call never satisfy that and
+    fall through to best-effort at timeout (those have no reply to measure).
+    """
+    waited = 0.0
+    text, has_tool = last_assistant_entry(transcript_path)
+    while (not text or has_tool) and waited < max_wait:
+        time.sleep(step)
+        waited += step
+        text, has_tool = last_assistant_entry(transcript_path)
+    return text if not has_tool else None
 
 
 def rendered_lines(text, usable_cols):
@@ -119,7 +144,7 @@ def main():
     avail_lines, usable_cols, cols, rows = budget
 
     transcript = payload.get("transcript_path")
-    text = last_reply_text(transcript) if transcript else None
+    text = final_reply_text(transcript) if transcript else None
     used = rendered_lines(text, usable_cols) if text and text.strip() else 0
 
     path = marker_path(sid)

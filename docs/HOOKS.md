@@ -6,6 +6,8 @@ tracks:
   - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/session-start-tmux-rename.sh
   - claude-global/hooks/user-prompt-terminal-size.sh
+  - claude-global/hooks/term-fit-budget.sh
+  - claude-global/hooks/stop-terminal-size.py
   - claude-global/hooks/user-prompt-git-remote.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
@@ -46,7 +48,7 @@ Because the hooks live in the committed base, fresh machines pick them up automa
 
 A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-terminal-size.sh`) measures the current terminal via tmux and emits a recommended line/word budget for the assistant's end-of-turn message, so the final user-facing reply fits the visible window without scrolling. `UserPromptSubmit` stdout is injected into the turn's context, so the echoed text becomes guidance the model sees.
 
-It measures the pane Claude renders into — `tmux display-message -p -t "$TMUX_PANE" '#{pane_width} #{pane_height}'` — rather than the client, since the pane is the area Claude actually paints.
+It measures the pane Claude renders into — `tmux display-message -p -t "$TMUX_PANE" '#{pane_width} #{pane_height}'` — rather than the client, since the pane is the area Claude actually paints. The measurement and budget math live in a shared helper, `claude-global/hooks/term-fit-budget.sh`, which prints `cols rows avail_lines max_words usable_cols` on one line (nothing when unmeasurable). Both this pre-turn hint and the post-turn check (below) source their numbers from it, so the budget the agent is *told* and the budget it's *checked against* can't drift.
 
 **Rendered lines is the governing constraint, words are secondary.** `avail_lines = rows − CLAUDE_TERM_FIT_RESERVED_ROWS` (default 10). The reserved count covers the TUI chrome — input box (3 rows: two borders + the input line), status line, mode hint, the `✻ Crunched for Xs` completion stat line, and surrounding blanks — measured empirically with `tmux capture-pane -p` (the fixed bottom chrome is 5 rows; the input box grows by a row per wrapped line of the user's typed prompt, which the static reserve can't predict, hence a couple rows of margin). The hint states `avail_lines` as a *rendered*-line limit, explicitly counting the blank lines markdown inserts between paragraphs and list items — a reply can sit at its word budget yet overflow because airy formatting spends rows on whitespace.
 
@@ -55,6 +57,8 @@ The word figure is a softer sanity check: `avail_lines × ((cols − CLAUDE_TERM
 **Verbosity (full once, compact after).** The first prompt of a session emits a full message explaining what the hint is and how to read the compact form; every prompt after emits a self-describing one-liner (`term-fit: 87x45 -> final reply <=35 rendered lines (~269 words); …`), kept self-describing so it still reads correctly if context compaction drops the preamble. "First" is tracked per session via a marker file `${TMPDIR:-/tmp}/claude-term-fit-<session_id>.seen` — same `$TMPDIR`/session-id pattern as the docs-refs notifier. `session_id` is parsed from the stdin payload without jq; if it can't be parsed the hook falls back to the compact form rather than re-explaining every turn.
 
 Guards: no-op (exit 0, no output) when `$TMUX` is unset or `tmux` is absent — outside tmux there's no reliable size to report — and also if tmux returns non-numeric dimensions. The budget is framed as a soft target for the final reply only (not tool output or intermediate steps), explicitly overridable when the task needs more.
+
+**Post-turn check (the warning).** The hint above is advisory — the model can still overshoot. `claude-global/hooks/stop-terminal-size.py` is the `Stop` counterpart: when the turn ends it reads the transcript, finds the last assistant message's text blocks, estimates its rendered line count (each source line costs ≥1 row; long lines add a row per soft wrap at `usable_cols`; blank lines count, mirroring the "rendered lines" notion), and compares against `avail_lines` from the same helper. On overflow it blocks the stop with `{"decision":"block","reason":…}` — the only channel that reaches the model from a `Stop` hook — feeding back the actual vs. budgeted line count and asking the model to either condense **or**, if a longer reply was genuinely warranted, keep it but acknowledge the overage and state by how much. It is **single-shot**: if `stop_hook_active` is set (we already blocked once this turn) it returns silently, so there's exactly one nudge and no revision loop. It also stays silent (exit 0, no output — a `Stop` hook's plain stdout goes nowhere) when not in tmux, when the transcript can't be read, or when the reply fits.
 
 ## Git remote-status hint
 

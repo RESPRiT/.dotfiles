@@ -45,10 +45,23 @@ if [ -n "$sid" ]; then
     rm -f "$warn" 2>/dev/null || true
     if [ "$#" -ge 4 ]; then
       over=$(( $1 - $2 ))
+      # Fields 5-7 (added later) carry block-element counts for a contextual tip;
+      # absent in legacy markers, so default to 0 and degrade to the plain warning.
+      tables=${5:-0}; table_extra=${6:-0}; code=${7:-0}
       printf 'term-fit warning: your previous reply ran ~%s rendered lines vs the ' "$1"
-      printf '%s-line budget (%sx%s) — over by ~%s. Read-only heads-up: aim to fit ' "$2" "$3" "$4" "$over"
-      printf 'the window, but ignore this if that turn genuinely warranted the length '
-      printf '(e.g. the user asked for depth or the task needed it).\n'
+      printf '%s-line budget (%sx%s) — over by ~%s. ' "$2" "$3" "$4" "$over"
+      # Tip: if a table accounted for most of the overrun, name it — grid tables
+      # render ~2 lines per row (a rule between every row), the top overflow cause.
+      if [ "$tables" -ge 1 ] && [ "$table_extra" -ge "$over" ]; then
+        printf 'A markdown table likely drove this: %s table line(s) came from grid ' "$table_extra"
+        printf 'rendering (a rule between every row) — a compact bullet list or fewer '
+        printf 'columns would reclaim most of those rows. '
+      elif [ "$tables" -ge 1 ]; then
+        printf '(Note: %s of those lines came from grid-table rendering.) ' "$table_extra"
+      fi
+      printf 'Read-only heads-up: aim to fit the window, but ignore this if that turn '
+      printf 'genuinely warranted the length (e.g. the user asked for depth or the task '
+      printf 'needed it).\n'
     fi
   fi
 fi
@@ -95,6 +108,11 @@ if [ "$full" -eq 1 ]; then
   printf 'reply only, not tool output or intermediate steps; exceeding it is fine '
   printf 'when the task genuinely needs more, but prefer concision, dense '
   printf 'formatting, and trimming anything that does not earn its row.\n'
+  printf 'Note how block elements render vs their source: a markdown TABLE paints '
+  printf '~2 rows per data row (a separator rule between every row, plus borders), '
+  printf 'so it is taller than it looks in source; a fenced CODE block renders '
+  printf 'slightly shorter (the ``` fences are stripped). Budget tables especially '
+  printf 'carefully — they are the most common cause of a reply overflowing.\n'
   printf 'Later turns report this compactly as: '
   compact
 else

@@ -18,6 +18,16 @@ read and freely ignore (e.g. when a long reply was genuinely warranted).
 Both this hook and the pre-turn hint pull their budget from term-fit-budget.sh,
 so the number the agent is told and the number it's checked against can't drift.
 
+The line estimate is block-aware (see analyze()): markdown grid tables render
+TALLER than their source (a rule between every row) and fenced code blocks
+render SHORTER (fences stripped) — measured against Claude Code's TUI renderer.
+The marker carries those block counts so the next turn's heads-up can name the
+likely culprit (e.g. "a table drove most of the overflow").
+
+Every measured reply (fit or overflow) also appends a sizes/counts-only record
+to .state/term-fit.log (never the reply text; rotated at 1MB), so the estimator
+can be calibrated against real turns instead of hand-reconstructed cases.
+
 Silent no-op (and clears any stale marker) when the reply fits. No-op when not
 in tmux (helper prints nothing), the transcript can't be read, or there's no
 session_id to key the marker on.
@@ -34,6 +44,26 @@ import time
 def marker_path(sid):
     tmp = os.environ.get("TMPDIR", "/tmp")
     return os.path.join(tmp, f"claude-term-fit-overflow-{sid}.warn")
+
+
+def log_path():
+    """`.state/term-fit.log` at the dotfiles repo root (hooks live two dirs in)."""
+    here = os.path.dirname(os.path.abspath(__file__))      # claude-global/hooks
+    repo = os.path.dirname(os.path.dirname(here))          # repo root
+    return os.path.join(repo, ".state", "term-fit.log")
+
+
+def append_log(line):
+    """Append one calibration record, rotating at 1MB like the other .state logs."""
+    path = log_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and os.path.getsize(path) > 1_000_000:
+            os.replace(path, path + ".1")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 def load_budget():
@@ -113,19 +143,73 @@ def final_reply_text(transcript_path, max_wait=2.0, step=0.05):
     return text if not has_tool else None
 
 
-def rendered_lines(text, usable_cols):
-    """Estimate rendered terminal rows, counting blank lines and soft-wrapping.
+def _is_table_sep(line):
+    """True for a markdown table separator row like `|---|:--:|` or `--- | ---`."""
+    s = line.strip()
+    if "-" not in s or "|" not in s:
+        return False
+    return all(c in "|-: " for c in s)
 
-    Mirrors the budget's "rendered lines" notion: each source line costs at
-    least one row (blank lines included, as markdown keeps paragraph spacing),
-    and long lines cost extra rows for every soft wrap at the usable width.
+
+def analyze(text, usable_cols):
+    """Estimate rendered terminal rows and note the block elements that drive it.
+
+    Returns (total_rows, info) where info counts the elements whose RENDERED
+    height diverges from their source line count — measured empirically against
+    Claude Code's TUI markdown renderer (see docs/HOOKS.md):
+
+      * Grid tables render a separator rule between every row plus top/bottom
+        borders: an N-source-line table (header + `|---|` spec + N-2 data rows)
+        paints 2N-1 rows. So a table is UNDER-counted by N-1 if treated 1:1 —
+        the dominant overflow source we observed.
+      * Fenced code blocks render with the ``` / ~~~ fence lines STRIPPED, so a
+        block is slightly OVER-counted (by its two fences) if treated 1:1.
+
+    Everything else costs ≥1 row per source line (blank lines included, as
+    markdown keeps paragraph spacing) plus a row per soft wrap at usable_cols.
     An approximation — good enough to flag a real overflow, not to be exact.
     """
-    total = 0
-    for line in text.split("\n"):
+    def wrap(line):
         width = len(line.rstrip())
-        total += max(1, math.ceil(width / usable_cols)) if width else 1
-    return total
+        return max(1, math.ceil(width / usable_cols)) if width else 1
+
+    lines = text.split("\n")
+    n = len(lines)
+    total = 0
+    info = {"tables": 0, "table_extra": 0, "code_blocks": 0}
+    in_code = False
+    i = 0
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+        # Fenced code block: the fence lines render to nothing; content renders 1:1.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            if not in_code:
+                in_code = True
+                info["code_blocks"] += 1
+            else:
+                in_code = False
+            i += 1
+            continue
+        if in_code:
+            total += wrap(line)
+            i += 1
+            continue
+        # Grid table: a row with a pipe whose NEXT line is a separator spec.
+        if "|" in line and i + 1 < n and _is_table_sep(lines[i + 1]):
+            j = i
+            while j < n and "|" in lines[j] and lines[j].strip():
+                j += 1
+            src = j - i              # source table lines (header + spec + data)
+            rendered = 2 * src - 1   # grid expansion: rule between every row + borders
+            total += rendered
+            info["tables"] += 1
+            info["table_extra"] += rendered - src
+            i = j
+            continue
+        total += wrap(line)
+        i += 1
+    return total, info
 
 
 def main():
@@ -145,14 +229,23 @@ def main():
 
     transcript = payload.get("transcript_path")
     text = final_reply_text(transcript) if transcript else None
-    used = rendered_lines(text, usable_cols) if text and text.strip() else 0
+    if text and text.strip():
+        used, info = analyze(text, usable_cols)
+        chars = len(text)
+    else:
+        used, info, chars = 0, {"tables": 0, "table_extra": 0, "code_blocks": 0}, 0
 
+    overflow = used > avail_lines
     path = marker_path(sid)
-    if used > avail_lines:
-        # Stash the numbers; the next UserPromptSubmit renders + consumes them.
+    if overflow:
+        # Stash the numbers + block-element counts; the next UserPromptSubmit
+        # renders a heads-up with contextual tips and consumes the marker.
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(f"{used} {avail_lines} {cols} {rows}\n")
+                f.write(
+                    f"{used} {avail_lines} {cols} {rows} "
+                    f"{info['tables']} {info['table_extra']} {info['code_blocks']}\n"
+                )
         except OSError:
             pass
     else:
@@ -161,6 +254,21 @@ def main():
             os.remove(path)
         except OSError:
             pass
+
+    # Calibration log: one record per measured reply (fit or overflow), so the
+    # estimator can be tuned against real data rather than reconstructed cases.
+    # Records only sizes/counts — never the reply text. Skips turns with no
+    # user-facing reply (tool-end turns), which carry no signal to calibrate on.
+    if chars:
+        try:
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            stamp = "?"
+        append_log(
+            f"{stamp} sid={sid} pane={cols}x{rows} budget={avail_lines} "
+            f"est={used} fired={1 if overflow else 0} tables={info['tables']} "
+            f"table_extra={info['table_extra']} code={info['code_blocks']} chars={chars}"
+        )
 
 
 if __name__ == "__main__":

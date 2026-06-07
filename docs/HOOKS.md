@@ -9,6 +9,7 @@ tracks:
   - claude-global/hooks/term-fit-budget.sh
   - claude-global/hooks/stop-terminal-size.py
   - claude-global/hooks/user-prompt-git-remote.sh
+  - claude-global/hooks/session-end-cleanup-chrome-mcp.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
   - shellrc
@@ -77,6 +78,12 @@ A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-git-remote.sh`) keep
 **Worktrees.** `cwd` may be a linked worktree, where `.git` is a file, not a directory. The repo is resolved via `git -C "$cwd"` and the stamp via `--git-common-dir` (made absolute), so both the throttle and the report work from the main checkout or any worktree. `main` vs `origin/main` is readable from a worktree on a feature branch because those refs are shared — which is exactly the "on a feature branch, assumed main was current" blind spot this addresses.
 
 **What it reports.** Current branch vs its upstream (`rev-list --left-right --count HEAD...@{u}`): `N behind`, or `N ahead, M behind` when diverged; ahead-only is silent. Separately, `<default> vs origin/<default>` (default branch from `origin/HEAD`, falling back to `main` then `master`) is reported **only when not already on the default branch** — otherwise the upstream check already covered it. Guards → silent no-op (exit 0): git unavailable, `cwd` missing/not a work tree, detached HEAD or no upstream (for the branch clause), and up-to-date.
+
+## Chrome MCP cleanup
+
+A `SessionEnd` hook (`claude-global/hooks/session-end-cleanup-chrome-mcp.sh`) kills the `chrome-devtools-mcp` process tree when a session ends, so the isolated Chrome plus its node helpers don't leak. The stack is `claude → pnpm dlx chrome-devtools-mcp (node) → chrome-devtools-mcp → telemetry watchdog (node) → isolated Chrome`, and the **watchdog deliberately detaches into its own process group**, so it survives the normal teardown of the session's process group — that orphan is the leak.
+
+The hook is **scoped to the exiting session only**, because multiple Claude sessions run concurrently and each owns its own MCP stack hanging off its own `claude` process; a blanket `pkill -f chrome-devtools-mcp` would nuke every session's MCP. It resolves *this* session's `claude` ancestor by walking up from the hook's own `$PPID` (the hook runs as a direct child of `claude`), then selects only `chrome-devtools-mcp` processes that are in that subtree — plus a watchdog whose recorded `--parent-pid` points into the subtree, catching one already reparented to init. Each match is expanded with its descendants so the isolated Chrome (a child of `chrome-devtools-mcp`, which doesn't itself match the name pattern) is included, then the set is `TERM`'d, given a brief grace period, and any survivor is `KILL`'d. If the session's own `claude` can't be positively identified, the hook does nothing rather than risk a sibling's processes. Set `CLEANUP_CHROME_MCP_DRYRUN=1` to print the kill set instead of signalling.
 
 ## Docs-refs notifier
 

@@ -24,6 +24,13 @@ if [ -n "$_keychain_bin" ]; then
   done
   [ $# -gt 0 ] && eval "$("$_keychain_bin" --eval "$@")"
   unset _k
+elif [ "$(uname -s)" = "Darwin" ]; then
+  # No keychain binary: fall back to macOS's native login Keychain + launchd
+  # ssh-agent. --apple-load-keychain pulls in every key whose passphrase was
+  # previously saved with `ssh-add --apple-use-keychain` (incl. the signing
+  # key). The launchd agent otherwise lazy-loads only the auth key, so git
+  # commit signing would hang waiting on the signing key's passphrase.
+  command -v ssh-add >/dev/null 2>&1 && ssh-add --apple-load-keychain >/dev/null 2>&1
 fi
 # _keychain_bin is cleaned up after ~/.shellrc.local (which may reuse it)
 

@@ -386,12 +386,20 @@ claude() {
   (
     export COLORTERM=truecolor
     [ -n "$_sess_cwd" ] && [ -d "$_sess_cwd" ] && cd "$_sess_cwd"
+    # `set -F @claude-leader-pid "#{pane_pid}"` authoritatively stamps this
+    # launched session as the leader at creation time (pane_pid is the
+    # pane-root claude). The SessionStart rename hook only lets the lock
+    # holder name the session, so guests sharing this tmux session (headless
+    # `claude -p`, a second interactive claude in another pane) can't hijack
+    # the title. `-F` (tmux >=3.0) expands the format in the value; on older
+    # tmux it no-ops and the hook falls back to first-claim acquisition.
     tmux new-session -s "claude-$$" \
       -e CLAUDE_CODE_TMUX_TRUECOLOR=1 \
       -e CLAUDE_EXIT_FILE="$exit_capture" \
       "$cmd" \
       \; set status-style "bg=colour238 fg=colour250" \; set destroy-unattached on \
-      \; set @claude-running 1
+      \; set @claude-running 1 \
+      \; set -F @claude-leader-pid "#{pane_pid}"
   )
   if [ -s "$exit_capture" ]; then
     local sid

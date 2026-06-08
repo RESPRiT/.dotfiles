@@ -66,6 +66,40 @@ def append_log(line):
         pass
 
 
+def debug_log(fields):
+    """Append one greppable line per Stop, gated behind CLAUDE_TERM_FIT_DEBUG.
+
+    Off by default (no env var → no-op, zero cost on the hot path). When set to
+    a truthy value, records every Stop's branch and the flush-poll outcome so we
+    can see whether real overflows are being measured or silently swallowed
+    (e.g. a flush-race bail to used=0 on a long reply). Best-effort: never raises
+    into the hook.
+
+    Distinct from append_log(): that records sizes/counts for *measured* replies
+    to calibrate the estimator; this records the *control-flow branch* (incl. the
+    bail paths that never measure a reply) to debug the flush race itself.
+
+    Logs to the dotfiles repo's gitignored `.state/term-fit-debug.log` — a
+    stable, per-machine path. Deliberately NOT $TMPDIR: hooks and the agent's
+    Bash tool run with *different* TMPDIRs, so a $TMPDIR-relative log is written
+    in one place and read from another. The hook is symlinked into
+    ~/.claude/hooks, so realpath() resolves back to the real file in the repo
+    before walking up to the repo root.
+    """
+    if os.environ.get("CLAUDE_TERM_FIT_DEBUG", "").lower() not in ("1", "true", "yes", "on"):
+        return
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+    line = ts + " " + " ".join(f"{k}={v}" for k, v in fields.items())
+    here = os.path.dirname(os.path.realpath(__file__))  # …/claude-global/hooks
+    state = os.path.normpath(os.path.join(here, "..", "..", ".state"))
+    try:
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "term-fit-debug.log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 def load_budget():
     """Run the shared helper; return (avail_lines, usable_cols, cols, rows) or None."""
     helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "term-fit-budget.sh")
@@ -133,6 +167,11 @@ def final_reply_text(transcript_path, max_wait=2.0, step=0.05):
     is text-bearing AND free of tool_use (i.e. a terminal reply), or until the
     deadline. Turns that legitimately end on a tool call never satisfy that and
     fall through to best-effort at timeout (those have no reply to measure).
+
+    Returns (reply_or_None, diag) where diag records how the poll resolved —
+    waited seconds, whether it hit the deadline, and the end-state of the last
+    entry — so the diagnostic log can tell a flush-race bail (timed out with the
+    final text not yet flushed) apart from a legitimate tool-call ending.
     """
     waited = 0.0
     text, has_tool = last_assistant_entry(transcript_path)
@@ -140,7 +179,14 @@ def final_reply_text(transcript_path, max_wait=2.0, step=0.05):
         time.sleep(step)
         waited += step
         text, has_tool = last_assistant_entry(transcript_path)
-    return text if not has_tool else None
+    reply = text if not has_tool else None
+    diag = {
+        "waited": round(waited, 2),
+        "timed_out": waited >= max_wait,
+        "has_tool_at_end": bool(has_tool),
+        "had_text_at_end": bool(text),
+    }
+    return reply, diag
 
 
 def _is_table_sep(line):
@@ -228,8 +274,13 @@ def main():
     avail_lines, usable_cols, cols, rows = budget
 
     transcript = payload.get("transcript_path")
-    text = final_reply_text(transcript) if transcript else None
-    if text and text.strip():
+    if transcript:
+        text, flush = final_reply_text(transcript)
+    else:
+        text, flush = None, {"waited": 0.0, "timed_out": False,
+                             "has_tool_at_end": False, "had_text_at_end": False}
+    has_reply = bool(text and text.strip())
+    if has_reply:
         used, info = analyze(text, usable_cols)
         chars = len(text)
     else:
@@ -269,6 +320,23 @@ def main():
             f"est={used} fired={1 if overflow else 0} tables={info['tables']} "
             f"table_extra={info['table_extra']} code={info['code_blocks']} chars={chars}"
         )
+
+    # Diagnostic (gated): which branch did this Stop take, and why? A "bail"
+    # means we never measured a reply — the suspected silent-overflow path when
+    # a long final reply hasn't flushed by the poll deadline.
+    if not transcript:
+        branch = "no-transcript"
+    elif not has_reply:
+        branch = "bail-flush" if flush["timed_out"] else "bail-no-reply"
+    else:
+        branch = "overflow" if overflow else "fit"
+    debug_log({
+        "sid": sid, "pane": f"{cols}x{rows}", "budget": avail_lines,
+        "usable": usable_cols, "used": used, "branch": branch,
+        "reply": "yes" if has_reply else "no",
+        "waited": flush["waited"], "timed_out": flush["timed_out"],
+        "has_tool": flush["has_tool_at_end"],
+    })
 
 
 if __name__ == "__main__":

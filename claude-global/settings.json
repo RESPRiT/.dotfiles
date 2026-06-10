@@ -58,6 +58,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-git-remote.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-last-message-stale.sh\""
           }
         ]
       }

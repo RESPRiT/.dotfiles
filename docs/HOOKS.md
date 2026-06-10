@@ -9,6 +9,7 @@ tracks:
   - claude-global/hooks/term-fit-budget.sh
   - claude-global/hooks/stop-terminal-size.py
   - claude-global/hooks/stop-last-message-time.sh
+  - claude-global/hooks/user-prompt-last-message-stale.sh
   - claude-global/hooks/user-prompt-git-remote.sh
   - claude-global/hooks/session-end-cleanup-chrome-mcp.sh
   - claude-global/hooks/docs-refs.py
@@ -85,6 +86,8 @@ When the reply fits, the Stop hook instead removes any stale marker (so an old o
 A `Stop` hook (`claude-global/hooks/stop-last-message-time.sh`) records when Claude's last visible message landed, for display in the statusline. On every Stop event it writes `<epoch> <HH:MM:SS>` to `~/.claude/last-stop/<session_id>` (and prunes entries older than 7 days). Stop hooks can block a stop and force continued work, so any given write may not be "the last message" — but the next Stop simply overwrites the file, so it always converges to the timestamp of the final reply the user actually sees; no `stop_hook_active` special-casing is needed.
 
 The consumer is machine-local: `~/.claude/statusline-command.local.sh` reads the file for the current session and renders the time as `[HH:MM]` after the 8-char session id (pale desaturated-yellow hour; lavender brackets and minutes; dim `|` divider before it; seconds dropped), displacing the metacog trace type label (`NEW`/`DO`/`PLAN`/…) when a timestamp exists — the id keeps its type-derived color, so the session type is still hinted. Sesh-tracked sessions show the time after the `(alias)` indicator. Before the session's first Stop there's no file and the old label behavior is unchanged.
+
+**In-flight dimming.** A `UserPromptSubmit` companion (`claude-global/hooks/user-prompt-last-message-stale.sh`) stamps the prompt time to `<session_id>.prompt` in the same directory. The statusline renders the whole `[HH:MM]` in the session-id's dim style while prompt-epoch ≥ stop-epoch (a turn is in flight — the displayed time no longer describes the latest visible message), and the next Stop's fresher epoch lights it back up. The epoch comparison self-resolves, so there's no marker-deletion handshake between the two hooks; the Stop hook's 7-day prune covers `.prompt` files too.
 
 ## Git remote-status hint
 

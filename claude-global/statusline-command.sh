@@ -123,9 +123,9 @@ fi
 
 # Fixed-breakpoint wrap: identity (user@host dir) always stays on line 1;
 # the status tail (branch, ctx, local extras, timestamps) drops to line 2 as
-# one unit when the combined line would overflow the terminal. COLUMNS is set
-# by Claude Code >= 2.1.153 before invoking the script; older versions get an
-# 80-col guess.
+# unit, indented two spaces, when the combined line would overflow the
+# terminal. COLUMNS is set by Claude Code >= 2.1.153 before invoking the
+# script; older versions get an 80-col guess.
 visible_len() {
   printf '%b' "$1" | sed $'s/\x1b\\[[0-9;]*m//g' | wc -m | tr -d ' '
 }
@@ -136,5 +136,5 @@ tail_part="${branch_part}${ctx_part}${extra}${start_part}${time_part}"
 if [ "$(visible_len "${head_part}${tail_part}")" -le "${COLUMNS:-80}" ]; then
   printf '%b\n' "${head_part}${tail_part}"
 else
-  printf '%b\n%b\n' "$head_part" "${tail_part# }"
+  printf '%b\n  %b\n' "$head_part" "${tail_part# }"
 fi

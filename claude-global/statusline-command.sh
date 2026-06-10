@@ -100,15 +100,15 @@ fi
 time_part=""
 stop_file="$HOME/.claude/last-stop/$session_id"
 if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
-  read -r stop_epoch last_msg_time < "$stop_file" 2>/dev/null
+  read -r stop_epoch last_msg_time stop_tz < "$stop_file" 2>/dev/null
   if [ -n "$last_msg_time" ]; then
     hh="${last_msg_time%%:*}"
     mm="${last_msg_time#*:}"; mm="${mm%%:*}"
     prompt_epoch=$(cat "$stop_file.prompt" 2>/dev/null)
     if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
-      time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}]${RESET}"
+      time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     else
-      time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}]${RESET}"
+      time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     fi
   fi
 fi

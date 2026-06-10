@@ -7,7 +7,7 @@
 # The statusline (statusline-command.local.sh) reads it to display a
 # "last message at HH:MM:SS" segment after the session id.
 #
-# File format: "<epoch> <HH:MM:SS>" — epoch kept for future staleness logic.
+# File format: "<epoch> <HH:MM:SS> <TZ>" — epoch kept for staleness logic.
 
 input=$(cat)
 
@@ -16,7 +16,7 @@ session_id=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 
 dir="$HOME/.claude/last-stop"
 mkdir -p "$dir"
-printf '%s %s\n' "$(date +%s)" "$(date +%H:%M:%S)" > "$dir/$session_id"
+printf '%s %s %s\n' "$(date +%s)" "$(date +%H:%M:%S)" "$(date +%Z)" > "$dir/$session_id"
 
 # Prune entries from long-dead sessions.
 find "$dir" -type f -mtime +7 -delete 2>/dev/null

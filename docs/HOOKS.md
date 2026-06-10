@@ -95,7 +95,9 @@ The `.prompt` stamp lands at Enter, but Claude Code only re-runs the statusline 
 
 A `SessionStart` hook (`claude-global/hooks/session-start-time.sh`) records when the session began, the counterpart to the last-message stamp above. It writes `<epoch> <HH:MM:SS> <TZ>` to `~/.claude/session-start/<session_id>` (same 7-day prune as `last-stop/`). `SessionStart` also fires on resume/clear/compact, so the write is **once-only** — an existing file is never overwritten, keeping the displayed time the original start rather than the latest resume. The timezone is captured at stamp time, so it stays correct even if the machine later changes zones.
 
-The base statusline renders it as `[HH:MM TZ]` (white hour; cornflower — 256-color 69 — brackets, minutes, and timezone; seconds dropped), placed between the machine-local `extra` segments and the last-message `[HH:MM TZ]`. Unlike the last-message stamp it never dims — the start time is immutable, so it's never stale.
+The base statusline renders it as `[HH:MM TZ]` (white hour; cornflower — 256-color 69 — brackets, minutes, and timezone; seconds dropped), placed between the machine-local `extra` segments and the last-message `[HH:MM TZ]`. It completes the fencepost pattern: the last-message stamp marks the boundary before every turn except the first, and the start stamp is fencepost zero, so every turn has a visible "previous boundary" time.
+
+The fencepost role extends to in-flight dimming: the stamp that marks the boundary before the in-flight turn is the one that dims. For turn one that's the start stamp, so it renders dim while a `.prompt` stamp exists with no `last-stop/<session_id>` file yet (first prompt submitted, no Stop has landed). The first Stop creates the file, lighting the start stamp back up permanently — from then on the last-message stamp owns the dim and the start stamp stays full-color (the start time itself is immutable and never goes stale).
 
 ## Git remote-status hint
 

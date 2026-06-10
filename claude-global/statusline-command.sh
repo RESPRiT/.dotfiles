@@ -77,10 +77,13 @@ if [ -f "$local_script" ]; then
 fi
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+stop_file="$HOME/.claude/last-stop/$session_id"
 
 # Session-start timestamp [HH:MM TZ]: when this session began, stamped
 # write-once by the session-start-time.sh SessionStart hook. Cornflower
-# with a white hour. See docs/HOOKS.md.
+# with a white hour. As fencepost zero it owns the in-flight dim for the
+# first turn only (prompt stamped, no Stop yet); after the first Stop the
+# last-message stamp below takes over. See docs/HOOKS.md.
 start_part=""
 start_file="$HOME/.claude/session-start/$session_id"
 if [ -n "$session_id" ] && [ -f "$start_file" ]; then
@@ -88,7 +91,11 @@ if [ -n "$session_id" ] && [ -f "$start_file" ]; then
   if [ -n "$start_time" ]; then
     s_hh="${start_time%%:*}"
     s_mm="${start_time#*:}"; s_mm="${s_mm%%:*}"
-    start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+    if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
+      start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+    else
+      start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+    fi
   fi
 fi
 
@@ -98,7 +105,6 @@ fi
 # the user-prompt-last-message-stale.sh UserPromptSubmit hook); the next
 # Stop's fresher epoch lights it back up. See docs/HOOKS.md.
 time_part=""
-stop_file="$HOME/.claude/last-stop/$session_id"
 if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
   read -r stop_epoch last_msg_time stop_tz < "$stop_file" 2>/dev/null
   if [ -n "$last_msg_time" ]; then

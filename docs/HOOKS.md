@@ -8,6 +8,7 @@ tracks:
   - claude-global/hooks/user-prompt-terminal-size.sh
   - claude-global/hooks/term-fit-budget.sh
   - claude-global/hooks/stop-terminal-size.py
+  - claude-global/hooks/stop-last-message-time.sh
   - claude-global/hooks/user-prompt-git-remote.sh
   - claude-global/hooks/session-end-cleanup-chrome-mcp.sh
   - claude-global/hooks/docs-refs.py
@@ -78,6 +79,12 @@ When the reply fits, the Stop hook instead removes any stale marker (so an old o
 **Calibration log.** Every measured reply (fit *or* overflow) appends one record to `.state/term-fit.log` at the repo root — `<iso-time> sid=… pane=CxR budget=… est=… fired=0|1 tables=… table_extra=… code=… chars=…` — so the estimator can be tuned against real turns instead of hand-reconstructed cases. It records only sizes and block counts, **never the reply text**, and rotates to `.log.1` past 1MB (same convention as the `claude-settings-*` logs). Turns with no user-facing reply (tool-end turns) are skipped, carrying no signal to calibrate on. `.state/` is gitignored, so the log stays per-machine.
 
 **Debug log (opt-in).** Distinct from the calibration log, an opt-in diagnostic gated behind `CLAUDE_TERM_FIT_DEBUG` (truthy = `1`/`true`/`yes`/`on`; off by default, zero cost on the hot path) appends one line per Stop to `.state/term-fit-debug.log`, recording the *control-flow branch* the hook took — `fit`, `overflow`, `no-transcript`, or a `bail-flush`/`bail-no-reply` that never measured a reply — plus the flush-poll outcome (`waited`, `timed_out`, `has_tool`). Where the calibration log answers "how big was the reply," this answers "did we measure a reply at all, or silently bail on the flush race." It also targets `.state/` (via `realpath()` from the symlinked hook), deliberately not `$TMPDIR`, because hooks and the agent's Bash tool see different `$TMPDIR`s — a `$TMPDIR`-relative log would be written in one place and read from another.
+
+## Last-message timestamp
+
+A `Stop` hook (`claude-global/hooks/stop-last-message-time.sh`) records when Claude's last visible message landed, for display in the statusline. On every Stop event it writes `<epoch> <HH:MM:SS>` to `~/.claude/last-stop/<session_id>` (and prunes entries older than 7 days). Stop hooks can block a stop and force continued work, so any given write may not be "the last message" — but the next Stop simply overwrites the file, so it always converges to the timestamp of the final reply the user actually sees; no `stop_hook_active` special-casing is needed.
+
+The consumer is machine-local: `~/.claude/statusline-command.local.sh` reads the file for the current session and renders the time (dim) after the 8-char session id, displacing the metacog trace type label (`NEW`/`DO`/`PLAN`/…) when a timestamp exists — the id keeps its type-derived color, so the session type is still hinted. Sesh-tracked sessions show the time after the `(alias)` indicator. Before the session's first Stop there's no file and the old label behavior is unchanged.
 
 ## Git remote-status hint
 

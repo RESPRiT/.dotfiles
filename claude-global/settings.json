@@ -69,6 +69,10 @@
           {
             "type": "command",
             "command": "python3 \"$HOME/.dotfiles/claude-global/hooks/stop-terminal-size.py\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/stop-last-message-time.sh\""
           }
         ]
       }

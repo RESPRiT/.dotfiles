@@ -34,6 +34,7 @@ GREEN="\033[32m"
 PINK="\033[38;5;218m"
 WHITE="\033[97m"
 LIGHT_ORANGE="\033[38;5;215m"
+CORNFLOWER="\033[38;5;69m"
 DIM="\033[2m"
 RESET="\033[0m"
 
@@ -75,13 +76,28 @@ if [ -f "$local_script" ]; then
   extra=$(printf '%s' "$input" | bash "$local_script" 2>/dev/null || true)
 fi
 
+session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+
+# Session-start timestamp [HH:MM TZ]: when this session began, stamped
+# write-once by the session-start-time.sh SessionStart hook. Cornflower
+# with a white hour. See docs/HOOKS.md.
+start_part=""
+start_file="$HOME/.claude/session-start/$session_id"
+if [ -n "$session_id" ] && [ -f "$start_file" ]; then
+  read -r _ start_time start_tz < "$start_file" 2>/dev/null
+  if [ -n "$start_time" ]; then
+    s_hh="${start_time%%:*}"
+    s_mm="${start_time#*:}"; s_mm="${s_mm%%:*}"
+    start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+  fi
+fi
+
 # Last-message timestamp [HH:MM]: when Claude's last visible reply landed,
 # written per-session by the stop-last-message-time.sh Stop hook. Rendered
 # dim while a turn is in flight (prompt stamped at/after the last Stop by
 # the user-prompt-last-message-stale.sh UserPromptSubmit hook); the next
 # Stop's fresher epoch lights it back up. See docs/HOOKS.md.
 time_part=""
-session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 stop_file="$HOME/.claude/last-stop/$session_id"
 if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
   read -r stop_epoch last_msg_time < "$stop_file" 2>/dev/null
@@ -97,4 +113,4 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
   fi
 fi
 
-printf '%b\n' "${user_host}${dir_part}${branch_part}${ctx_part}${extra}${time_part}"
+printf '%b\n' "${user_host}${dir_part}${branch_part}${ctx_part}${extra}${start_part}${time_part}"

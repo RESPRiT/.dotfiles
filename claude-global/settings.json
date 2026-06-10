@@ -44,6 +44,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-drift-check.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-time.sh\""
           }
         ]
       }

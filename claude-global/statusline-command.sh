@@ -32,6 +32,8 @@ SSH_GREEN="\033[38;5;114m"
 RED="\033[38;5;210m"
 GREEN="\033[32m"
 PINK="\033[38;5;218m"
+WHITE="\033[97m"
+LIGHT_ORANGE="\033[38;5;215m"
 DIM="\033[2m"
 RESET="\033[0m"
 
@@ -73,4 +75,26 @@ if [ -f "$local_script" ]; then
   extra=$(printf '%s' "$input" | bash "$local_script" 2>/dev/null || true)
 fi
 
-printf '%b\n' "${user_host}${dir_part}${branch_part}${ctx_part}${extra}"
+# Last-message timestamp [HH:MM]: when Claude's last visible reply landed,
+# written per-session by the stop-last-message-time.sh Stop hook. Rendered
+# dim while a turn is in flight (prompt stamped at/after the last Stop by
+# the user-prompt-last-message-stale.sh UserPromptSubmit hook); the next
+# Stop's fresher epoch lights it back up. See docs/HOOKS.md.
+time_part=""
+session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+stop_file="$HOME/.claude/last-stop/$session_id"
+if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
+  read -r stop_epoch last_msg_time < "$stop_file" 2>/dev/null
+  if [ -n "$last_msg_time" ]; then
+    hh="${last_msg_time%%:*}"
+    mm="${last_msg_time#*:}"; mm="${mm%%:*}"
+    prompt_epoch=$(cat "$stop_file.prompt" 2>/dev/null)
+    if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
+      time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}]${RESET}"
+    else
+      time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}]${RESET}"
+    fi
+  fi
+fi
+
+printf '%b\n' "${user_host}${dir_part}${branch_part}${ctx_part}${extra}${time_part}"

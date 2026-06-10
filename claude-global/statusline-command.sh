@@ -79,26 +79,6 @@ fi
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 stop_file="$HOME/.claude/last-stop/$session_id"
 
-# Session-start timestamp [HH:MM TZ]: when this session began, stamped
-# write-once by the session-start-time.sh SessionStart hook. Cornflower
-# with a white hour. As fencepost zero it owns the in-flight dim for the
-# first turn only (prompt stamped, no Stop yet); after the first Stop the
-# last-message stamp below takes over. See docs/HOOKS.md.
-start_part=""
-start_file="$HOME/.claude/session-start/$session_id"
-if [ -n "$session_id" ] && [ -f "$start_file" ]; then
-  read -r _ start_time start_tz < "$start_file" 2>/dev/null
-  if [ -n "$start_time" ]; then
-    s_hh="${start_time%%:*}"
-    s_mm="${start_time#*:}"; s_mm="${s_mm%%:*}"
-    if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
-      start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
-    else
-      start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
-    fi
-  fi
-fi
-
 # Last-message timestamp [HH:MM]: when Claude's last visible reply landed,
 # written per-session by the stop-last-message-time.sh Stop hook. Rendered
 # dim while a turn is in flight (prompt stamped at/after the last Stop by
@@ -115,6 +95,28 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
       time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     else
       time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
+    fi
+  fi
+fi
+
+# Session-start timestamp [HH:MM TZ]: when this session began, stamped
+# write-once by the session-start-time.sh SessionStart hook. Cornflower
+# with a white hour. Fencepost zero: it stands in for the last-message
+# stamp until the first Stop produces one, then yields — only the most
+# recent boundary stamp is shown. While the first turn is in flight
+# (prompt stamped, no Stop yet) it renders dim, same as the last-message
+# stamp does on later turns. See docs/HOOKS.md.
+start_part=""
+start_file="$HOME/.claude/session-start/$session_id"
+if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
+  read -r _ start_time start_tz < "$start_file" 2>/dev/null
+  if [ -n "$start_time" ]; then
+    s_hh="${start_time%%:*}"
+    s_mm="${start_time#*:}"; s_mm="${s_mm%%:*}"
+    if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
+      start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+    else
+      start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     fi
   fi
 fi

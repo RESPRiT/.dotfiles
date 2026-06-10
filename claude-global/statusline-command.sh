@@ -121,20 +121,39 @@ if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
   fi
 fi
 
-# Fixed-breakpoint wrap: identity (user@host dir) always stays on line 1;
-# the status tail (branch, ctx, local extras, timestamps) drops to line 2 as
-# unit, indented two spaces, when the combined line would overflow the
-# terminal. COLUMNS is set by Claude Code >= 2.1.153 before invoking the
-# script; older versions get an 80-col guess.
+# Consolidated dir+branch: when the cwd is named after the branch (worktree
+# convention, with the branch's "/" flattened to "-"), the duplicated suffix
+# can be dropped from the dir and the branch segment butted directly against
+# the remainder, e.g. numeric-io/fdp-(*hrsn/fdp-981-...). Only a suffix match
+# at a separator boundary counts, so branch "main" never eats the tail of an
+# unrelated dir like "domain".
+fused_part=""
+if [ -n "$branch" ]; then
+  norm_branch=${branch//\//-}
+  case "$short_dir" in
+    "$norm_branch"|*"/$norm_branch"|*"-$norm_branch"|*"_$norm_branch"|*".$norm_branch")
+      fused_part=" ${short_dir%"$norm_branch"}${branch_part# }"
+      ;;
+  esac
+fi
+
+# Output cascade: full one-liner, else consolidated one-liner, else two lines
+# wrapped before the branch with the continuation indented two spaces.
+# COLUMNS is set by Claude Code >= 2.1.153 before invoking the script; older
+# versions get an 80-col guess.
 visible_len() {
   printf '%b' "$1" | sed $'s/\x1b\\[[0-9;]*m//g' | wc -m | tr -d ' '
 }
 
+cols=${COLUMNS:-80}
+status_tail="${ctx_part}${extra}${start_part}${time_part}"
 head_part="${user_host}${dir_part}"
-tail_part="${branch_part}${ctx_part}${extra}${start_part}${time_part}"
+tail_part="${branch_part}${status_tail}"
 
-if [ "$(visible_len "${head_part}${tail_part}")" -le "${COLUMNS:-80}" ]; then
+if [ "$(visible_len "${head_part}${tail_part}")" -le "$cols" ]; then
   printf '%b\n' "${head_part}${tail_part}"
+elif [ -n "$fused_part" ] && [ "$(visible_len "${user_host}${fused_part}${status_tail}")" -le "$cols" ]; then
+  printf '%b\n' "${user_host}${fused_part}${status_tail}"
 else
   printf '%b\n  %b\n' "$head_part" "${tail_part# }"
 fi

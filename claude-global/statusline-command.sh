@@ -98,7 +98,7 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
     if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
       time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     elif [ "$stop_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - stop_epoch)) -ge "$STALE_SECS" ]; then
-      time_part=" ${DIM}|${RESET} ${RED}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
+      time_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${hh}${RESET}${RED}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     else
       time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     fi
@@ -123,7 +123,7 @@ if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
     if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
       start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     elif [ "$start_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - start_epoch)) -ge "$STALE_SECS" ]; then
-      start_part=" ${DIM}|${RESET} ${RED}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+      start_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${s_hh}${RESET}${RED}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     else
       start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     fi

@@ -123,7 +123,7 @@ fi
 
 # Consolidated dir+branch: when the cwd is named after the branch (worktree
 # convention, with the branch's "/" flattened to "-"), the duplicated suffix
-# can be dropped from the dir and the branch segment butted directly against
+# is dropped from the dir and the branch segment butted directly against
 # the remainder, e.g. numeric-io/fdp-(*hrsn/fdp-981-...). Only a suffix match
 # at a separator boundary counts, so branch "main" never eats the tail of an
 # unrelated dir like "domain".
@@ -137,8 +137,10 @@ if [ -n "$branch" ]; then
   esac
 fi
 
-# Output cascade: full one-liner, else consolidated one-liner, else two lines
-# wrapped before the branch with the continuation indented two spaces.
+# Output cascade: consolidated one-liner whenever the dir is branch-named
+# (it's strictly shorter than the full form, so no extra fit check ordering
+# is needed), else full one-liner, else two lines wrapped before the branch
+# with the continuation indented two spaces.
 # COLUMNS is set by Claude Code >= 2.1.153 before invoking the script; older
 # versions get an 80-col guess.
 visible_len() {
@@ -150,10 +152,10 @@ status_tail="${ctx_part}${extra}${start_part}${time_part}"
 head_part="${user_host}${dir_part}"
 tail_part="${branch_part}${status_tail}"
 
-if [ "$(visible_len "${head_part}${tail_part}")" -le "$cols" ]; then
-  printf '%b\n' "${head_part}${tail_part}"
-elif [ -n "$fused_part" ] && [ "$(visible_len "${user_host}${fused_part}${status_tail}")" -le "$cols" ]; then
+if [ -n "$fused_part" ] && [ "$(visible_len "${user_host}${fused_part}${status_tail}")" -le "$cols" ]; then
   printf '%b\n' "${user_host}${fused_part}${status_tail}"
+elif [ "$(visible_len "${head_part}${tail_part}")" -le "$cols" ]; then
+  printf '%b\n' "${head_part}${tail_part}"
 else
   printf '%b\n  %b\n' "$head_part" "${tail_part# }"
 fi

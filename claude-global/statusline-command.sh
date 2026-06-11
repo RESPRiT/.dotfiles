@@ -85,9 +85,32 @@ stop_file="$HOME/.claude/last-stop/$session_id"
 # the user-prompt-last-message-stale.sh UserPromptSubmit hook); the next
 # Stop's fresher epoch lights it back up. A stamp older than STALE_SECS
 # renders all-red instead — the session has sat idle long past the point
-# the time is glanceable context. See docs/HOOKS.md.
+# the time is glanceable context. A stale-red stamp from a previous local
+# calendar day also gets a red " (N days ago)" suffix after the bracket.
+# See docs/HOOKS.md.
 STALE_SECS=$((8 * 3600))
 now_epoch=$(date +%s)
+
+# " (N days ago)" when epoch $1 falls on an earlier local calendar day than
+# now; empty for today. Day boundaries use the current UTC offset (date +%z,
+# portable across BSD/GNU) — a DST shift since the stamp can mis-bucket
+# within an hour of midnight, acceptable for a glanceable hint.
+days_ago_suffix() {
+  off=$(date +%z)
+  case "$off" in
+    [+-][0-9][0-9][0-9][0-9])
+      off_secs=$(( 10#${off:1:2} * 3600 + 10#${off:3:2} * 60 ))
+      [ "${off:0:1}" = "-" ] && off_secs=$(( -off_secs ))
+      ;;
+    *) off_secs=0 ;;
+  esac
+  n=$(( (now_epoch + off_secs) / 86400 - ($1 + off_secs) / 86400 ))
+  if [ "$n" -eq 1 ]; then
+    printf ' (1 day ago)'
+  elif [ "$n" -gt 1 ]; then
+    printf ' (%s days ago)' "$n"
+  fi
+}
 time_part=""
 if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
   read -r stop_epoch last_msg_time stop_tz < "$stop_file" 2>/dev/null
@@ -98,7 +121,7 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
     if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
       time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     elif [ "$stop_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - stop_epoch)) -ge "$STALE_SECS" ]; then
-      time_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${hh}${RESET}${RED}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
+      time_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${hh}${RESET}${RED}:${mm}${stop_tz:+ ${stop_tz}}]$(days_ago_suffix "$stop_epoch")${RESET}"
     else
       time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     fi
@@ -123,7 +146,7 @@ if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
     if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
       start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     elif [ "$start_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - start_epoch)) -ge "$STALE_SECS" ]; then
-      start_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${s_hh}${RESET}${RED}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+      start_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${s_hh}${RESET}${RED}:${s_mm}${start_tz:+ ${start_tz}}]$(days_ago_suffix "$start_epoch")${RESET}"
     else
       start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     fi

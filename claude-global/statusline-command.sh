@@ -83,7 +83,11 @@ stop_file="$HOME/.claude/last-stop/$session_id"
 # written per-session by the stop-last-message-time.sh Stop hook. Rendered
 # dim while a turn is in flight (prompt stamped at/after the last Stop by
 # the user-prompt-last-message-stale.sh UserPromptSubmit hook); the next
-# Stop's fresher epoch lights it back up. See docs/HOOKS.md.
+# Stop's fresher epoch lights it back up. A stamp older than STALE_SECS
+# renders all-red instead — the session has sat idle long past the point
+# the time is glanceable context. See docs/HOOKS.md.
+STALE_SECS=$((8 * 3600))
+now_epoch=$(date +%s)
 time_part=""
 if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
   read -r stop_epoch last_msg_time stop_tz < "$stop_file" 2>/dev/null
@@ -93,6 +97,8 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
     prompt_epoch=$(cat "$stop_file.prompt" 2>/dev/null)
     if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
       time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
+    elif [ "$stop_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - stop_epoch)) -ge "$STALE_SECS" ]; then
+      time_part=" ${DIM}|${RESET} ${RED}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     else
       time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     fi
@@ -105,16 +111,19 @@ fi
 # stamp until the first Stop produces one, then yields — only the most
 # recent boundary stamp is shown. While the first turn is in flight
 # (prompt stamped, no Stop yet) it renders dim, same as the last-message
-# stamp does on later turns. See docs/HOOKS.md.
+# stamp does on later turns; past STALE_SECS it goes all-red the same
+# way too. See docs/HOOKS.md.
 start_part=""
 start_file="$HOME/.claude/session-start/$session_id"
 if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
-  read -r _ start_time start_tz < "$start_file" 2>/dev/null
+  read -r start_epoch start_time start_tz < "$start_file" 2>/dev/null
   if [ -n "$start_time" ]; then
     s_hh="${start_time%%:*}"
     s_mm="${start_time#*:}"; s_mm="${s_mm%%:*}"
     if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
       start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+    elif [ "$start_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - start_epoch)) -ge "$STALE_SECS" ]; then
+      start_part=" ${DIM}|${RESET} ${RED}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     else
       start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     fi

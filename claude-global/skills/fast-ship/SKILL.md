@@ -1,15 +1,14 @@
 ---
 name: fast-ship
-description: Plan → worktree → implement → multi-agent review → verify → merge & push, for shipping a quick feature. Invoke explicitly with /fast-ship <feature>; runs autonomously through merge and push.
+description: Ship a quick feature end-to-end — plan → worktree → implement → parallel multi-agent review → verify → merge & push, running autonomously through merge and push. Invoke when the user explicitly asks to fast-ship — typing /fast-ship (inline is fine, e.g. "can you /fast-ship this, as we described?") or saying "fast-ship this" / "ship this quickly" — and take the feature from their words or the surrounding conversation. Do NOT auto-trigger on a generic "add a feature" request: it merges and pushes without asking, so it needs an explicit fast-ship cue.
 argument-hint: <feature description>
-disable-model-invocation: true
 ---
 
 You are running the **fast-ship** workflow to ship a quick feature end-to-end. The feature to ship is:
 
 $ARGUMENTS
 
-If no feature description was provided above, ask the user what to ship before continuing.
+**Resolving the feature:** `$ARGUMENTS` is filled when invoked as `/fast-ship <feature>`. It is often empty or a deictic pointer to the conversation ("this feature", "this", "as we just described it") — this skill is frequently invoked inline as reusable context rather than as a standalone command. In that case, take the *actual* feature from the surrounding conversation rather than treating the pointer phrase as the spec. Only if the feature is unclear from both `$ARGUMENTS` and the conversation should you ask the user what to ship before continuing.
 
 Work through the phases below in order, end to end, **without stopping for approval**. Keep the user informed with a short note at each phase boundary, but run autonomously through merge and push.
 

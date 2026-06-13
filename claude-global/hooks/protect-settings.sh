@@ -22,7 +22,7 @@ be overwritten on the next install.sh / post-merge run. Edit the source instead:
   - $HOME/.dotfiles/claude-global/settings.json   (committed base, shared across machines)
   - $HOME/.claude/settings.local.json             (machine-local overlay)
 
-Then re-run \$HOME/.dotfiles/install.sh (or hooks/post-merge) to regenerate.
+Then re-run \$HOME/.dotfiles/install.sh (or git-hooks/post-merge) to regenerate.
 EOF
     exit 2
     ;;

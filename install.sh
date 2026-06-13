@@ -338,7 +338,7 @@ if [ ! -d "$HOME/.vim/pack/plugins/start/vim-colors-solarized" ]; then
 fi
 
 # Git hooks
-link "$DOTFILES/hooks/post-merge" "$DOTFILES/.git/hooks/post-merge"
+link "$DOTFILES/git-hooks/post-merge" "$DOTFILES/.git/hooks/post-merge"
 
 # jq — required by the Claude settings merge below; also a generally useful
 # CLI for shell scripts that touch JSON. Installed without prompting because
@@ -766,7 +766,7 @@ fi
 if [ ! -f "$STATE_DIR/migrated" ]; then
   echo "0" > "$STATE_DIR/migrated"
 fi
-"$DOTFILES/hooks/post-merge"
+"$DOTFILES/git-hooks/post-merge"
 
 echo ""
 echo "${YES_COLOR}Done!${RESET} Machine-specific config goes in ~/.zshrc.local or ~/.bashrc.local"

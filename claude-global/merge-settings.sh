@@ -9,7 +9,7 @@
 # - Arrays of objects: concat (e.g., hooks; preserves firing order).
 # - Scalars: right wins.
 #
-# Called by install.sh, hooks/post-merge, the in-session
+# Called by install.sh, git-hooks/post-merge, the in-session
 # remerge-on-settings-edit.sh PostToolUse hook, and the
 # session-start-drift-check.sh SessionStart hook. The destination is
 # intentionally a regular file (not a symlink) — Claude Code has a known bug
@@ -54,7 +54,7 @@
 #                                                clobbering.
 #
 # Used by:
-# - install.sh, hooks/post-merge, migrations/003: pass --force (unattended,
+# - install.sh, git-hooks/post-merge, migrations/003: pass --force (unattended,
 #   need forward progress; auto-reconcile still runs first, --force only
 #   matters for case 5c).
 # - PostToolUse remerge hook, SessionStart drift-check hook: no flag.

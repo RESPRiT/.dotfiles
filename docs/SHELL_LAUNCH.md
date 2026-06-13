@@ -3,7 +3,7 @@ tracks:
   - bashrc
   - zshrc
   - shellrc
-  - hooks/post-merge
+  - git-hooks/post-merge
   - install.sh
   - ~/.ssh/config
 ---
@@ -14,7 +14,7 @@ tracks:
 
 The detach uses the double-subshell idiom — `( ( cmd ) & )` rather than `( cmd ) & disown` — so the interactive shell never sees a backgrounded job and zsh skips the `[N] PID` job-control announcement.
 
-If the background fetch finds upstream commits, it captures one headline line (`[label] Updated from remote (N commits)`) plus one line per migration that ran (`[migration] NAME ✓` or `✗`, emitted by `hooks/post-merge`) into `.state/notice-<label>` via a tmp-then-mv atomic write. `git pull` runs with `--quiet` so its own progress doesn't leak into the notice; per-migration stdout/stderr is appended to `.state/migrations.log` instead, keeping the notice terse while preserving a full transcript for debugging. A `_repo_show_notices` precmd hook (zsh) / `PROMPT_COMMAND` function (bash), also defined in `shellrc`, prints and clears those notice files on the next prompt redraw. If nothing was pulled, no notice is written and the user sees nothing.
+If the background fetch finds upstream commits, it captures one headline line (`[label] Updated from remote (N commits)`) plus one line per migration that ran (`[migration] NAME ✓` or `✗`, emitted by `git-hooks/post-merge`) into `.state/notice-<label>` via a tmp-then-mv atomic write. `git pull` runs with `--quiet` so its own progress doesn't leak into the notice; per-migration stdout/stderr is appended to `.state/migrations.log` instead, keeping the notice terse while preserving a full transcript for debugging. A `_repo_show_notices` precmd hook (zsh) / `PROMPT_COMMAND` function (bash), also defined in `shellrc`, prints and clears those notice files on the next prompt redraw. If nothing was pulled, no notice is written and the user sees nothing.
 
 This is the third iteration of this code:
 

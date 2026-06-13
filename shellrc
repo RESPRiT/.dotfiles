@@ -119,7 +119,7 @@ _repo_auto_update() {
       # so the precmd hook never sees a half-written notice if the bg subshell
       # is killed mid-write. `--quiet` suppresses git's own "Updating .. Fast-
       # forward .." progress so the notice stays at one line per repo + one
-      # line per migration (post-merge prints those, see hooks/post-merge).
+      # line per migration (post-merge prints those, see git-hooks/post-merge).
       local plural=""
       [ "$cnt" != "1" ] && plural="s"
       {
@@ -182,7 +182,7 @@ elif [ -f "$_dotfiles_dir/.state/migrated" ] && [ -d "$_dotfiles_dir/migrations"
   if [ "$_max_migration" -gt "${_last_applied:-0}" ]; then
     _pending=$((_max_migration - _last_applied))
     _plural=s; [ "$_pending" -eq 1 ] && _plural=
-    _hook_path="$_dotfiles_dir/hooks/post-merge"
+    _hook_path="$_dotfiles_dir/git-hooks/post-merge"
     case "$_hook_path" in
       "$HOME"/*) _hook_path="~${_hook_path#$HOME}" ;;
     esac

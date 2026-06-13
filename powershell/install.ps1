@@ -171,7 +171,7 @@ Install-Winget -DisplayName 'eza'     -Id 'eza-community.eza'  -DeclineKey 'eza'
 # design (microsoft/terminal#17240) -- so we surgically insert the binding into
 # the user's settings.json, leaving the rest of the file untouched. The binding
 # is canonically defined in powershell/windows-terminal-newline.json.
-# See docs/windows-terminal-shift-enter.md.
+# See docs/WINDOWS_TERMINAL_SHIFT_ENTER.md.
 function Add-WTNewlineBinding([string]$BindingFile) {
     if (-not (Test-Path -LiteralPath $BindingFile)) {
         Write-Host "${NColor}$BindingFile missing; skipping WT newline binding${Reset}"
@@ -200,7 +200,7 @@ function Add-WTNewlineBinding([string]$BindingFile) {
             continue
         }
         if ($raw -match '"shift\+enter"') {
-            Write-Host "${NColor}$path already binds shift+enter to something else; leaving it alone (see docs/windows-terminal-shift-enter.md)${Reset}"
+            Write-Host "${NColor}$path already binds shift+enter to something else; leaving it alone (see docs/WINDOWS_TERMINAL_SHIFT_ENTER.md)${Reset}"
             continue
         }
 

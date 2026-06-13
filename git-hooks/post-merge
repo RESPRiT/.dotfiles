@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # post-merge hook — runs numbered migration scripts after git pull.
-# Designed to live in the repo at hooks/post-merge and be symlinked
-# into .git/hooks/post-merge by install.sh.
+# Designed to live in the repo at git-hooks/post-merge and be symlinked
+# into .git/git-hooks/post-merge by install.sh.
 
 set -euo pipefail
 

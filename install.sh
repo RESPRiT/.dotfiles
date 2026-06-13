@@ -371,6 +371,16 @@ link_shell "$DOTFILES/claude-global/statusline-command.sh" \
   "$HOME/.claude/statusline-command.sh" \
   "$HOME/.claude/statusline-command.local.sh"
 
+# Skills: symlink each committed skill directory into ~/.claude/skills/ so it's
+# user-global. Per-skill symlinks (not a whole-dir symlink) so machine-local
+# skills can coexist in the same directory.
+mkdir -p "$HOME/.claude/skills"
+for _skill_dir in "$DOTFILES/claude-global/skills"/*/; do
+  [ -d "$_skill_dir" ] || continue
+  link "${_skill_dir%/}" "$HOME/.claude/skills/$(basename "$_skill_dir")"
+done
+unset _skill_dir
+
 if command -v jq &>/dev/null; then
   # --force: install.sh is unattended and needs to make forward progress.
   # Drift (if any) is logged to .state/claude-settings-drift.log before

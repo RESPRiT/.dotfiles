@@ -169,10 +169,11 @@ function global:prompt {
 
 # === Tool inits ===
 if (Get-Command zoxide -ErrorAction SilentlyContinue) {
-    # --cmd cd makes `cd` the smart command (matches `alias cd=z` in shellrc)
-    Invoke-Expression (& { (zoxide init powershell --cmd cd | Out-String) })
-    function global:.. { z .. }
-    function global:... { z ../.. }
+    # Default init: `z` is the frecency jump command; `cd` stays the builtin
+    # Set-Location (deterministic, errors loudly). Matches shellrc keeping them separate.
+    Invoke-Expression (& { (zoxide init powershell | Out-String) })
+    function global:.. { Set-Location .. }
+    function global:... { Set-Location ../.. }
 }
 
 if (Get-Command atuin -ErrorAction SilentlyContinue) {

@@ -231,9 +231,8 @@ alias l='ls -l'
 
 # Aliases
 alias gs='git status'
-alias cd='z'
-alias ..='z ..'
-alias ...='z ../..'
+alias ..='cd ..'
+alias ...='cd ../..'
 alias grep='grep --color=auto'
 alias mkdir='mkdir -pv'
 alias path='echo $PATH | tr ":" "\n"'

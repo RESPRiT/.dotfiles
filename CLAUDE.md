@@ -62,7 +62,7 @@ The in-session `remerge-on-settings-edit.sh` (PostToolUse), `session-start-drift
 
 This repo treats bash and zsh as first-class shells. Shared shell config lives in `shellrc`, which is sourced by both `bashrc` and `zshrc`. When adding shell-level functionality (functions, aliases, exports, PATH tweaks), prefer `shellrc` so the behavior is consistent across both shells. Only put code in `zshrc`/`bashrc` directly when it's genuinely shell-specific (zsh completion, bash readline bindings, shell-specific prompt escapes, etc.).
 
-PowerShell is a separate-shell-family case (Windows). Its config lives in `powershell/profile.ps1` and aims for behavioral parity with the POSIX side — same prompt shape (`user@host cwd(branch) >`), same aliases (`ll`/`l`/`gs`/`cd`→`z`/`..`/`...`/`extract`/`reload`), same git-branch coloring rules (red dirty / pink main|master / green other). When changing prompt/alias semantics, update both sides.
+PowerShell is a separate-shell-family case (Windows). Its config lives in `powershell/profile.ps1` and aims for behavioral parity with the POSIX side — same prompt shape (`user@host cwd(branch) >`), same aliases (`ll`/`l`/`gs`/`..`/`...`/`extract`/`reload`, plus `z` for frecency jumps while `cd` stays the deterministic builtin), same git-branch coloring rules (red dirty / pink main|master / green other). When changing prompt/alias semantics, update both sides.
 
 `shellrc` should stick to syntax that works in both shells:
 - Use `[ ... ]` (POSIX test), not `[[ ... ]]` (bash/zsh extension).

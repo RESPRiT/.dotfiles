@@ -69,11 +69,12 @@ fi
 # Measure + compute the budget via the shared helper (single source of truth).
 # Prints nothing when not measurable (no tmux); bail in that case.
 set -- $(sh "$(dirname "$0")/term-fit-budget.sh")
-[ "$#" -ge 4 ] || exit 0
+[ "$#" -ge 6 ] || exit 0
 cols=$1
 rows=$2
 avail_lines=$3
 max_words=$4
+target=$6  # field 5 is usable_cols (unused here); field 6 is the soft target
 
 # Decide full vs compact. First prompt of a session (no marker yet) → full.
 full=1
@@ -92,22 +93,24 @@ fi
 # Compact form, repeated each turn. Self-describing so it still reads correctly
 # if the full preamble is lost to compaction.
 compact() {
-  printf 'term-fit: %sx%s -> final reply <=%s rendered lines (~%s words); ' \
-    "$cols" "$rows" "$avail_lines" "$max_words"
-  printf 'rendered lines (incl. blank lines between paragraphs/list items) is the primary limit.\n'
+  printf 'term-fit: %sx%s -> aim <=%s rendered lines (%s hard ceiling, ~%s words); ' \
+    "$cols" "$rows" "$target" "$avail_lines" "$max_words"
+  printf 'rendered lines (incl. blank lines between paragraphs/list items) is the primary limit; '
+  printf 'the ceiling is hard unless the user asked for depth.\n'
 }
 
 if [ "$full" -eq 1 ]; then
   printf 'Terminal-fit hint (via tmux): each turn reports the current pane size '
   printf 'and a budget for the final end-of-turn reply, so it fits in the visible '
   printf 'window without scrolling.\n'
-  printf 'Terminal window: %sx%s (cols x rows). Keep the final reply within ' "$cols" "$rows"
-  printf '~%s RENDERED lines — the primary constraint, counting the blank lines ' "$avail_lines"
-  printf 'markdown inserts between paragraphs and list items, not just lines of '
-  printf 'text. Secondary check: ~%s words at this width. Applies to the final ' "$max_words"
-  printf 'reply only, not tool output or intermediate steps; exceeding it is fine '
-  printf 'when the task genuinely needs more, but prefer concision, dense '
-  printf 'formatting, and trimming anything that does not earn its row.\n'
+  printf 'Terminal window: %sx%s (cols x rows). Aim for %s RENDERED lines or fewer ' "$cols" "$rows" "$target"
+  printf 'in the final reply; %s lines is the hard ceiling — do not exceed it. ' "$avail_lines"
+  printf '"Rendered" counts the blank lines markdown inserts between paragraphs and '
+  printf 'list items, not just lines of text, so airy formatting spends rows fast — '
+  printf 'aim a few lines under the ceiling rather than filling to it. Secondary '
+  printf 'check: ~%s words at this width. This applies to the final reply only, not ' "$max_words"
+  printf 'tool output or intermediate steps. Treat the ceiling as hard for ordinary '
+  printf 'replies; exceed it only when the user explicitly asked for depth or length.\n'
   printf 'Note how block elements render vs their source: a markdown TABLE paints '
   printf '~2 rows per data row (a separator rule between every row, plus borders), '
   printf 'so it is taller than it looks in source; a fenced CODE block renders '

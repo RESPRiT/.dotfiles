@@ -14,6 +14,10 @@
 
 input=$(cat)
 
+# Runs ~1/s — keep every git call off index.lock; a bare `git status` opportunistically
+# refreshes the index, taking the lock and racing/orphaning agent git add/commit/rebase.
+export GIT_OPTIONAL_LOCKS=0
+
 cwd=$(printf '%s' "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 used_pct=$(printf '%s' "$input" | jq -r '.context_window.used_percentage // empty')
 

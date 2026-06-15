@@ -28,12 +28,19 @@ dirty=""
 if [ -n "$branch" ] && [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
   dirty="*"
 fi
+# "^" marks "ahead of upstream"; shows regardless of color (dirty wins the color).
+ahead=""
+if [ -n "$branch" ]; then
+  ahead_count=$(git -C "$cwd" rev-list --count '@{upstream}..HEAD' 2>/dev/null)
+  [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] && ahead="^"
+fi
 
 LIGHT_BLUE="\033[38;5;117m"
 SSH_GREEN="\033[38;5;114m"
 RED="\033[38;5;210m"
 GREEN="\033[32m"
 PINK="\033[38;5;218m"
+YELLOW="\033[38;5;220m"
 LIGHT_ORANGE="\033[38;5;215m"
 LIGHT_YELLOW="\033[38;5;229m"
 CORNFLOWER="\033[38;5;69m"
@@ -67,7 +74,9 @@ dir_part=" ${short_dir}"
 
 if [ -n "$branch" ]; then
   if [ -n "$dirty" ]; then
-    branch_part=" ${RED}(${dirty}${branch})${RESET}"
+    branch_part=" ${RED}(${dirty}${branch}${ahead})${RESET}"
+  elif [ -n "$ahead" ]; then
+    branch_part=" ${YELLOW}(${branch}${ahead})${RESET}"
   elif [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
     branch_part=" ${PINK}(${branch})${RESET}"
   else

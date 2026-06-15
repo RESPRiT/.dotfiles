@@ -129,7 +129,9 @@ function extract {
 
 # === Prompt: user@host cwd(_git_branch_info) > ===
 # Mirrors the bash/zsh prompt: light blue local, light green over SSH,
-# git branch with dirty marker (210 dirty / 218 main|master / 2 other).
+# git branch with dirty marker (210 dirty / 220 ahead / 218 main|master / 2 other).
+# A trailing "^" marks "ahead of upstream" and shows regardless of color, so a
+# dirty+ahead branch reads "(*main^)" in red (dirty wins the color).
 function script:_git_branch_info {
     $branch = & git symbolic-ref --short HEAD 2>$null
     if (-not $branch) { return '' }
@@ -140,11 +142,15 @@ function script:_git_branch_info {
         $untracked = & git ls-files --others --exclude-standard 2>$null
         if ($untracked) { $dirty = '*' }
     }
-    $color = if ($dirty)                        { 210 }
+    $ahead = ''
+    $aheadCount = & git rev-list --count '@{upstream}..HEAD' 2>$null
+    if ($LASTEXITCODE -eq 0 -and [int]$aheadCount -gt 0) { $ahead = '^' }
+    $color = if ($dirty)                          { 210 }
+             elseif ($ahead)                      { 220 }
              elseif ($branch -in 'main','master') { 218 }
-             else                                { 2 }
+             else                                 { 2 }
     $esc = [char]27
-    return " ${esc}[38;5;${color}m($dirty$branch)${esc}[0m"
+    return " ${esc}[38;5;${color}m($dirty$branch$ahead)${esc}[0m"
 }
 
 function global:prompt {

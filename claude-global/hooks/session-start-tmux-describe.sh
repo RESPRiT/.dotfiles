@@ -30,7 +30,7 @@ else
 fi
 [ -n "$name" ] || exit 0
 
-msg="This Claude session is running inside tmux session \"$name\". Attach from another terminal with: tmux attach -t \"$name\"."
+msg="This Claude session is running inside tmux session \"$name\"."
 
 jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $m}}'
 exit 0

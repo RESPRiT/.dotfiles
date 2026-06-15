@@ -5,8 +5,10 @@
 # Composition: the committed base emits portable segments and then invokes
 # ~/.claude/statusline-command.local.sh (if present) with the same input JSON
 # on stdin. The local script writes additional segments to stdout (no newline)
-# and we append. This lets per-machine extensions (metacog/trace, etc.) plug in
-# without forking the base. install.sh's link_shell symlinks this file to
+# and we append. This lets per-host-only segments plug in without forking the
+# base (the session-id head and sesh segments that once lived in the local
+# script are now rendered natively below).
+# install.sh's link_shell symlinks this file to
 # ~/.claude/statusline-command.sh and moves any pre-existing real file at that
 # path to ~/.claude/statusline-command.local.sh.
 
@@ -32,11 +34,27 @@ SSH_GREEN="\033[38;5;114m"
 RED="\033[38;5;210m"
 GREEN="\033[32m"
 PINK="\033[38;5;218m"
-WHITE="\033[97m"
 LIGHT_ORANGE="\033[38;5;215m"
+LIGHT_YELLOW="\033[38;5;229m"
 CORNFLOWER="\033[38;5;69m"
 DIM="\033[2m"
 RESET="\033[0m"
+
+# Theme-adaptive highlight. The bright-white "pop" used for the timestamp
+# hour (and, in the local extension, the session-id head) is nearly
+# invisible on light terminal themes. Claude Code persists the active theme
+# in ~/.claude/settings.json as a light*/dark*-prefixed name, so read it and
+# fall back to near-black on light backgrounds; anything else (incl. a
+# missing/unreadable file) stays bright white, preserving prior behavior.
+# Exported so the local statusline extension reuses the choice without
+# re-detecting. The statusline input JSON does not carry the theme, so
+# settings.json is the source of truth.
+claude_theme=$(jq -r '.theme // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+case "$claude_theme" in
+  light*) HIGHLIGHT="\033[38;5;16m" ;;
+  *)      HIGHLIGHT="\033[97m" ;;
+esac
+export STATUSLINE_HIGHLIGHT="$HIGHLIGHT"
 
 # Match the shell prompt: green over SSH, light blue locally.
 if [ -n "$SSH_CONNECTION" ]; then
@@ -78,6 +96,33 @@ fi
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 stop_file="$HOME/.claude/last-stop/$session_id"
+
+# Session-id head: first 8 chars of the session id, the 3-char prefix in the
+# theme highlight and the 5-char remainder dim. When the session is tracked by
+# sesh, append a (<alias-or-id>) indicator (the dirname encodes the optional
+# alias; prefer it over the bare id). Self-guards on `command -v sesh`, so it
+# no-ops where sesh isn't installed. Folded in from the old local extension.
+session_part=""
+if [ -n "$session_id" ]; then
+  short_id="${session_id:0:8}"
+  id_prefix="${short_id:0:3}"
+  id_suffix="${short_id:3}"
+  styled_id="${HIGHLIGHT}${id_prefix}${RESET}${DIM}${id_suffix}${RESET}"
+  sesh_label=""
+  if command -v sesh >/dev/null 2>&1; then
+    sesh_path=$(sesh path --session-id "$short_id" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$sesh_path" ]; then
+      sesh_dirname=$(basename "$sesh_path")
+      sesh_alias=$(printf '%s' "$sesh_dirname" | sed -E "s/^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-${short_id}-?//")
+      sesh_label="${sesh_alias:-$short_id}"
+    fi
+  fi
+  if [ -n "$sesh_label" ]; then
+    session_part=" ${DIM}|${RESET} ${styled_id} ${LIGHT_YELLOW}(${sesh_label})${RESET}"
+  else
+    session_part=" ${DIM}|${RESET} ${styled_id}"
+  fi
+fi
 
 # Last-message timestamp [HH:MM]: when Claude's last visible reply landed,
 # written per-session by the stop-last-message-time.sh Stop hook. Rendered
@@ -121,16 +166,16 @@ if [ -n "$session_id" ] && [ -f "$stop_file" ]; then
     if [ -n "$prompt_epoch" ] && [ "$prompt_epoch" -ge "${stop_epoch:-0}" ] 2>/dev/null; then
       time_part=" ${DIM}|${RESET} ${DIM}[${hh}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     elif [ "$stop_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - stop_epoch)) -ge "$STALE_SECS" ]; then
-      time_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${hh}${RESET}${RED}:${mm}${stop_tz:+ ${stop_tz}}]$(days_ago_suffix "$stop_epoch")${RESET}"
+      time_part=" ${DIM}|${RESET} ${RED}[${RESET}${HIGHLIGHT}${hh}${RESET}${RED}:${mm}${stop_tz:+ ${stop_tz}}]$(days_ago_suffix "$stop_epoch")${RESET}"
     else
-      time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${WHITE}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
+      time_part=" ${DIM}|${RESET} ${LIGHT_ORANGE}[${RESET}${HIGHLIGHT}${hh}${RESET}${LIGHT_ORANGE}:${mm}${stop_tz:+ ${stop_tz}}]${RESET}"
     fi
   fi
 fi
 
 # Session-start timestamp [HH:MM TZ]: when this session began, stamped
 # write-once by the session-start-time.sh SessionStart hook. Cornflower
-# with a white hour. Fencepost zero: it stands in for the last-message
+# with a highlighted hour. Fencepost zero: it stands in for the last-message
 # stamp until the first Stop produces one, then yields — only the most
 # recent boundary stamp is shown. While the first turn is in flight
 # (prompt stamped, no Stop yet) it renders dim, same as the last-message
@@ -146,9 +191,9 @@ if [ -n "$session_id" ] && [ -z "$time_part" ] && [ -f "$start_file" ]; then
     if [ -f "$stop_file.prompt" ] && [ ! -f "$stop_file" ]; then
       start_part=" ${DIM}|${RESET} ${DIM}[${s_hh}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     elif [ "$start_epoch" -gt 0 ] 2>/dev/null && [ $((now_epoch - start_epoch)) -ge "$STALE_SECS" ]; then
-      start_part=" ${DIM}|${RESET} ${RED}[${RESET}${WHITE}${s_hh}${RESET}${RED}:${s_mm}${start_tz:+ ${start_tz}}]$(days_ago_suffix "$start_epoch")${RESET}"
+      start_part=" ${DIM}|${RESET} ${RED}[${RESET}${HIGHLIGHT}${s_hh}${RESET}${RED}:${s_mm}${start_tz:+ ${start_tz}}]$(days_ago_suffix "$start_epoch")${RESET}"
     else
-      start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${WHITE}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
+      start_part=" ${DIM}|${RESET} ${CORNFLOWER}[${RESET}${HIGHLIGHT}${s_hh}${RESET}${CORNFLOWER}:${s_mm}${start_tz:+ ${start_tz}}]${RESET}"
     fi
   fi
 fi
@@ -180,7 +225,7 @@ visible_len() {
 }
 
 cols=${COLUMNS:-80}
-status_tail="${ctx_part}${extra}${start_part}${time_part}"
+status_tail="${ctx_part}${session_part}${extra}${start_part}${time_part}"
 head_part="${user_host}${dir_part}"
 tail_part="${branch_part}${status_tail}"
 

@@ -5,6 +5,7 @@ tracks:
   - claude-global/hooks/remerge-on-settings-edit.sh
   - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/session-start-tmux-rename.sh
+  - claude-global/hooks/session-start-tmux-describe.sh
   - claude-global/hooks/user-prompt-terminal-size.sh
   - claude-global/hooks/term-fit-budget.sh
   - claude-global/hooks/stop-terminal-size.py
@@ -50,6 +51,8 @@ Because `CLAUDE_EXIT_FILE` lives in the tmux *session* env, it is inherited by *
 The `claude()` wrapper stamps the lock authoritatively at session-creation time, appending `set -F @claude-leader-pid "#{pane_pid}"` to its `new-session` chain (`pane_pid` is the pane-root claude). That way the launched session — not whichever guest happens to fire `SessionStart` first — owns the name; the hook also self-seeds the lock on first claim if it's unset (e.g. a session predating this change). The hook identifies the firing claude by walking up from `$PPID` to the nearest ancestor whose executable name contains `claude`, and renames only when that matches the lock holder. The leader's own lifecycle re-fires (`/clear`, `/compact`, `--resume`) keep the same pid, so the title still tracks the currently resumable id; interloper sessions are ignored.
 
 The lock is treated as **held** only while its pid is still a live `claude` (checked via `ps -o comm=`); a dead pid (the leader exited) or one recycled by a non-claude process yields a **released** lock, so a guest claude that outlives the leader re-acquires ownership on its next `SessionStart` (handoff). The var is session-scoped, so it survives `/clear` & `/compact` and dies with the session (`destroy-unattached on`). If the firing process can't be identified (no `ps`, unexpected naming), the hook falls through and renames rather than regress the normal single-session case. Rename failures (8-char prefix collision with another wrapper session) are swallowed and the placeholder name stays.
+
+A third `SessionStart` hook (`claude-global/hooks/session-start-tmux-describe.sh`) tells the *agent* which tmux session it's in, via `additionalContext` (e.g. *"This Claude session is running inside tmux session `claude-c3e0fa71`. Attach from another terminal with: `tmux attach -t claude-c3e0fa71`."*), so it can reference the session by name and suggest an attach command. It runs concurrently with the rename hook, so rather than read a possibly-not-yet-renamed live `#S` it **derives** the same canonical `claude-<sid8>` from the session id when wrapper-launched (`CLAUDE_EXIT_FILE` set) — keep that derivation in sync with the rename hook. When Claude runs inside the user's *own* tmux session (`CLAUDE_EXIT_FILE` unset, rename hook no-ops), it reports the live `#S` name instead. No-ops outside tmux or without `jq`.
 
 Because the hooks live in the committed base, fresh machines pick them up automatically the first time `merge-settings.sh` runs — no manual reproduction step.
 

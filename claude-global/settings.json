@@ -110,6 +110,15 @@
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/protect-settings.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-pr-authoring-reminder.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

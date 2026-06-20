@@ -59,9 +59,9 @@ if [ -n "$sid" ]; then
       elif [ "$tables" -ge 1 ]; then
         printf '(Note: %s of those lines came from grid-table rendering.) ' "$table_extra"
       fi
-      printf 'Read-only heads-up: aim to fit the window, but ignore this if that turn '
-      printf 'genuinely warranted the length (e.g. the user asked for depth or the task '
-      printf 'needed it).\n'
+      printf 'Read-only heads-up: never exceed the ceiling on purpose — if a reply '
+      printf 'genuinely needs more room, split it into parts and continue only after the '
+      printf 'user confirms; ignore this if that turn truly warranted the length.\n'
     fi
   fi
 fi
@@ -96,7 +96,8 @@ compact() {
   printf 'term-fit: %sx%s -> aim <=%s rendered lines (%s hard ceiling, ~%s words); ' \
     "$cols" "$rows" "$target" "$avail_lines" "$max_words"
   printf 'rendered lines (incl. blank lines between paragraphs/list items) is the primary limit; '
-  printf 'the ceiling is hard unless the user asked for depth.\n'
+  printf 'never exceed the ceiling on purpose — if you must (user asked or evidently appropriate), '
+  printf 'split the reply into two parts and continue only after the user confirms they want more.\n'
 }
 
 if [ "$full" -eq 1 ]; then
@@ -109,8 +110,11 @@ if [ "$full" -eq 1 ]; then
   printf 'list items, not just lines of text, so airy formatting spends rows fast — '
   printf 'aim a few lines under the ceiling rather than filling to it. Secondary '
   printf 'check: ~%s words at this width. This applies to the final reply only, not ' "$max_words"
-  printf 'tool output or intermediate steps. Treat the ceiling as hard for ordinary '
-  printf 'replies; exceed it only when the user explicitly asked for depth or length.\n'
+  printf 'tool output or intermediate steps. Two rules govern the ceiling: never exceed '
+  printf 'it on purpose; and if you must — because the user asked or it is evidently '
+  printf 'appropriate — split the reply into two parts, ending the first at the ceiling '
+  printf 'with a brief note that you have more to share, and continuing only after the '
+  printf 'user confirms they want to see it.\n'
   printf 'Note how block elements render vs their source: a markdown TABLE paints '
   printf '~2 rows per data row (a separator rule between every row, plus borders), '
   printf 'so it is taller than it looks in source; a fenced CODE block renders '

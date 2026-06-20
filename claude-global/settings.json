@@ -43,11 +43,19 @@
           },
           {
             "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-tmux-describe.sh\""
+          },
+          {
+            "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-drift-check.sh\""
           },
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-cwd-anchor.sh\""
           }
         ]
       }
@@ -67,6 +75,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-last-message-stale.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-cwd-report.sh\""
           }
         ]
       }
@@ -104,6 +116,19 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/protect-settings.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-cd-guard.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-pr-authoring-reminder.sh\""
           }
         ]
       }

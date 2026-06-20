@@ -5,6 +5,7 @@ tracks:
   - claude-global/hooks/remerge-on-settings-edit.sh
   - claude-global/hooks/session-start-drift-check.sh
   - claude-global/hooks/session-start-tmux-rename.sh
+  - claude-global/hooks/session-start-tmux-describe.sh
   - claude-global/hooks/user-prompt-terminal-size.sh
   - claude-global/hooks/term-fit-budget.sh
   - claude-global/hooks/stop-terminal-size.py
@@ -14,6 +15,9 @@ tracks:
   - claude-global/hooks/session-end-cleanup-chrome-mcp.sh
   - claude-global/hooks/docs-refs.py
   - claude-global/hooks/docs-refs-notify.py
+  - claude-global/hooks/pretool-cd-guard.sh
+  - claude-global/hooks/session-start-cwd-anchor.sh
+  - claude-global/hooks/user-prompt-cwd-report.sh
   - shellrc
   - ~/.claude/settings.json
   - ~/.claude/settings.local.json
@@ -50,6 +54,8 @@ Because `CLAUDE_EXIT_FILE` lives in the tmux *session* env, it is inherited by *
 The `claude()` wrapper stamps the lock authoritatively at session-creation time, appending `set -F @claude-leader-pid "#{pane_pid}"` to its `new-session` chain (`pane_pid` is the pane-root claude). That way the launched session — not whichever guest happens to fire `SessionStart` first — owns the name; the hook also self-seeds the lock on first claim if it's unset (e.g. a session predating this change). The hook identifies the firing claude by walking up from `$PPID` to the nearest ancestor whose executable name contains `claude`, and renames only when that matches the lock holder. The leader's own lifecycle re-fires (`/clear`, `/compact`, `--resume`) keep the same pid, so the title still tracks the currently resumable id; interloper sessions are ignored.
 
 The lock is treated as **held** only while its pid is still a live `claude` (checked via `ps -o comm=`); a dead pid (the leader exited) or one recycled by a non-claude process yields a **released** lock, so a guest claude that outlives the leader re-acquires ownership on its next `SessionStart` (handoff). The var is session-scoped, so it survives `/clear` & `/compact` and dies with the session (`destroy-unattached on`). If the firing process can't be identified (no `ps`, unexpected naming), the hook falls through and renames rather than regress the normal single-session case. Rename failures (8-char prefix collision with another wrapper session) are swallowed and the placeholder name stays.
+
+A third `SessionStart` hook (`claude-global/hooks/session-start-tmux-describe.sh`) tells the *agent* which tmux session it's in, via `additionalContext` (e.g. *"This Claude session is running inside tmux session `claude-c3e0fa71`."*), so it can reference the session by name (e.g. suggest an attach command, or drive other panes/windows). It runs concurrently with the rename hook, so rather than read a possibly-not-yet-renamed live `#S` it **derives** the same canonical `claude-<sid8>` from the session id when wrapper-launched (`CLAUDE_EXIT_FILE` set) — keep that derivation in sync with the rename hook. When Claude runs inside the user's *own* tmux session (`CLAUDE_EXIT_FILE` unset, rename hook no-ops), it reports the live `#S` name instead. No-ops outside tmux or without `jq`.
 
 Because the hooks live in the committed base, fresh machines pick them up automatically the first time `merge-settings.sh` runs — no manual reproduction step.
 
@@ -112,6 +118,18 @@ A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-git-remote.sh`) keep
 **Worktrees.** `cwd` may be a linked worktree, where `.git` is a file, not a directory. The repo is resolved via `git -C "$cwd"` and the stamp via `--git-common-dir` (made absolute), so both the throttle and the report work from the main checkout or any worktree. `main` vs `origin/main` is readable from a worktree on a feature branch because those refs are shared — which is exactly the "on a feature branch, assumed main was current" blind spot this addresses.
 
 **What it reports.** Current branch vs its upstream (`rev-list --left-right --count HEAD...@{u}`): `N behind`, or `N ahead, M behind` when diverged; ahead-only is silent. Separately, `<default> vs origin/<default>` (default branch from `origin/HEAD`, falling back to `main` then `master`) is reported **only when not already on the default branch** — otherwise the upstream check already covered it. Guards → silent no-op (exit 0): git unavailable, `cwd` missing/not a work tree, detached HEAD or no upstream (for the branch clause), and up-to-date.
+
+## Working-directory guard & homebase reporter
+
+Two complementary hooks keep the agent anchored to a single working directory (its "homebase") and surface the silent cwd drift that otherwise makes it resolve relative paths against the wrong directory. `cd` is treated as reserved for *setting a homebase* — the launch dir, a worktree, a deliberately chosen other repo — never as a convenience prefix for running a command somewhere else.
+
+**The guard (prevention).** A `PreToolUse` hook on `Bash` (`claude-global/hooks/pretool-cd-guard.sh`) blocks any `cd` that is **not a standalone command** — a `cd` chained with `&&`/`;`/`|`/`&`, or wrapped in a subshell. `cd build && make` silently moves the shell for the rest of the session: Claude Code only auto-resets (and notices) a `cd` that escapes the launch *tree*, while a `cd` into a *subdirectory* persists with no signal at all. The guard forces the durable alternatives instead — an absolute path, a tool's own directory flag (`git -C`, `make -C`, `tar -C`), or its path argument — while still allowing a **solo** `cd`, which is how you legitimately set a new homebase. It blocks via `exit 2` + stderr (like `protect-settings.sh`, not reminder-only like `pretool-pr-authoring-reminder.sh`), and the stderr text enumerates the alternatives so the agent can retry correctly in one step.
+
+Detection is best-effort syntactic: an `awk` char-scanner tracks single/double-quote state, splits the command into statements on *unquoted* operators and subshell parens, strips leading env-assignments and transparent prefixes (`sudo`, `command`, `builtin`, `exec`, …) from each, and tests whether the statement's command word is `cd`; it blocks when a `cd` statement coexists with any other statement. Quote-awareness means `cd "weird && name"` (one solo `cd` into an oddly-named directory) is allowed while `cd x && y` is blocked, and `echo "…cd…"` (cd as a mere substring) is ignored. Accepted misses — caught by the reporter below — are brace groups `{ cd x; }`, loop bodies (`for … do cd … done`), and a `cd` smuggled through `eval`/`bash -c` (those run in a child and don't drift the parent anyway).
+
+**The reporter (backstop).** A `UserPromptSubmit` hook (`claude-global/hooks/user-prompt-cwd-report.sh`) injects a one-line notice into each turn's context **only when** the payload `cwd` differs from this session's recorded launch dir — silent while at homebase, so it adds no per-turn noise. Claude Code's `UserPromptSubmit` payload carries the **live** shell cwd (verified: it reflects an in-tree `cd` performed on a prior turn, persisted across the turn boundary), which is what makes this work — it catches whatever drift slips past the guard, however it arose, so relative paths are never resolved blind. The message flags that the move is expected for a deliberate workspace change (a worktree, another repo) and should otherwise be treated as drift to correct.
+
+The launch dir is recorded by a `SessionStart` hook (`claude-global/hooks/session-start-cwd-anchor.sh`) to `~/.claude/cwd-anchor/<session_id>` — the same per-session-file pattern as `last-stop/`. If the reporter finds no anchor (a session that predates the anchor hook), it seeds one from the current cwd and stays silent rather than guess. Both no-op cleanly without `jq` or a parseable payload. The guard needs no anchor — it reasons purely about the command string — so it works from the first turn regardless.
 
 ## Chrome MCP cleanup
 

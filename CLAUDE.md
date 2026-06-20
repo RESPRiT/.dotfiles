@@ -6,7 +6,7 @@ This is a **solo-developer repo** — there's no review workflow and no shared `
 
 ## Directory structure
 
-- `claude-global/` — Global Claude Code settings managed as dotfiles (symlinked to `~/.claude/`). This is where committed Claude settings live (e.g., `settings.local.json`). Subdir `skills/<name>/SKILL.md` holds user-global skills (each symlinked into `~/.claude/skills/<name>` by `install.sh`).
+- `claude-global/` — Global Claude Code settings managed as dotfiles (symlinked to `~/.claude/`). This is where committed Claude settings live (e.g., `settings.local.json`). Subdir `skills/<name>/SKILL.md` holds user-global skills (each symlinked into `~/.claude/skills/<name>` by `install.sh`). `keybindings.json` (a plain symlink, like skills) is a slot for custom Claude Code key rebinds — currently empty, because the Ctrl+Z→undo rebind lives in `tmux.conf` instead (Claude Code doesn't honor a remapped `ctrl+z`, so it's done at the tmux layer; see the `@claude-running`-gated `C-z` binding).
 - `.claude/` — Project-local Claude Code settings for *this repo*. Not the same as the dotfiles that get symlinked to the home directory.
 - `git-hooks/` — Git hooks managed by the repo. `install.sh` symlinks these into `.git/hooks/`.
 - `lib/` — Sourceable shell libraries shared by `install.sh` and migrations. `colors.sh` exports the color constants; `helpers.sh` exposes the idempotent `link` / `link_shell` / `install_wrapper` / `install_bash_profile` helpers. Callers must define `$DOTFILES` first.

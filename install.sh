@@ -381,6 +381,13 @@ for _skill_dir in "$DOTFILES/claude-global/skills"/*/; do
 done
 unset _skill_dir
 
+# Keybindings: symlink the committed Claude Code keybindings so custom rebinds
+# (e.g. ctrl+z / cmd+z -> chat:undo) are user-global. Plain link (like skills):
+# keybindings.json has no include/source mechanism and isn't rewritten by
+# Claude Code's UI, so it needs neither the local-overlay nor the settings.json
+# merge dance.
+link "$DOTFILES/claude-global/keybindings.json" "$HOME/.claude/keybindings.json"
+
 if command -v jq &>/dev/null; then
   # --force: install.sh is unattended and needs to make forward progress.
   # Drift (if any) is logged to .state/claude-settings-drift.log before

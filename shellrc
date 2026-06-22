@@ -231,6 +231,8 @@ alias l='ls -l'
 
 # Aliases
 alias gs='git status'
+alias gl='git log'
+alias gp='git push'
 alias ..='cd ..'
 alias ...='cd ../..'
 alias grep='grep --color=auto'

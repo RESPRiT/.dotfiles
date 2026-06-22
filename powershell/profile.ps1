@@ -62,6 +62,8 @@ if (Get-Command eza -ErrorAction SilentlyContinue) {
     function l  { Get-ChildItem @args }
 }
 function gs { git status @args }
+function gl { git log @args }
+function gp { git push @args }
 function path { $env:PATH -split [IO.Path]::PathSeparator }
 # *nix-style which: print the resolved path for executables, or kind/name for
 # functions/aliases. Multi-resolution prints all matches in PATH order.

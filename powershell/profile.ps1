@@ -137,13 +137,12 @@ function extract {
 function script:_git_branch_info {
     $branch = & git symbolic-ref --short HEAD 2>$null
     if (-not $branch) { return '' }
+    # One `status --porcelain` catches staged + unstaged + untracked (matches
+    # lib/git-prompt.sh on the POSIX side; the old diff/ls-files pair missed
+    # staged-only changes).
     $dirty = ''
-    & git diff --quiet 2>$null
-    if ($LASTEXITCODE -ne 0) { $dirty = '*' }
-    if (-not $dirty) {
-        $untracked = & git ls-files --others --exclude-standard 2>$null
-        if ($untracked) { $dirty = '*' }
-    }
+    $status = & git status --porcelain 2>$null
+    if ($status) { $dirty = '*' }
     $ahead = ''
     $aheadCount = & git rev-list --count '@{upstream}..HEAD' 2>$null
     if ($LASTEXITCODE -eq 0 -and [int]$aheadCount -gt 0) { $ahead = '^' }

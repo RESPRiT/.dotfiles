@@ -27,24 +27,24 @@ short_dir=$(printf '%s' "$cwd" | awk -F'/' '{
   else print $n
 }')
 
-branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null)
-dirty=""
-if [ -n "$branch" ] && [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ]; then
-  dirty="*"
-fi
-# "^" marks "ahead of upstream"; shows regardless of color (dirty wins the color).
-ahead=""
-if [ -n "$branch" ]; then
-  ahead_count=$(git -C "$cwd" rev-list --count '@{upstream}..HEAD' 2>/dev/null)
-  [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] && ahead="^"
+# Branch/*dirty/^ahead + color come from the shared git-prompt lib (also used by
+# the shell prompt) so the two never drift. Locate it by following this file's
+# symlink into the dotfiles repo (install.sh link_shell uses an absolute target);
+# fall back to the file's own dir if it's a real copy. branch is reused below for
+# the dir+branch consolidation, so keep it populated.
+_sl_self="${BASH_SOURCE[0]:-$0}"
+[ -L "$_sl_self" ] && _sl_self=$(readlink "$_sl_self")
+_sl_lib="$(cd "$(dirname "$_sl_self")/.." 2>/dev/null && pwd)/lib/git-prompt.sh"
+[ -r "$_sl_lib" ] && . "$_sl_lib"
+branch=""; dirty=""; ahead=""
+if command -v _git_prompt_state >/dev/null 2>&1; then
+  _git_prompt_state "$cwd"
+  branch="$GIT_PS_BRANCH"; dirty="$GIT_PS_DIRTY"; ahead="$GIT_PS_AHEAD"
 fi
 
 LIGHT_BLUE="\033[38;5;117m"
 SSH_GREEN="\033[38;5;114m"
 RED="\033[38;5;210m"
-GREEN="\033[32m"
-PINK="\033[38;5;218m"
-YELLOW="\033[38;5;220m"
 LIGHT_ORANGE="\033[38;5;215m"
 LIGHT_YELLOW="\033[38;5;229m"
 CORNFLOWER="\033[38;5;69m"
@@ -76,16 +76,10 @@ fi
 user_host="${host_color}$(whoami)@$(hostname -s)${RESET}"
 dir_part=" ${short_dir}"
 
+# Color cascade now lives in the lib (GIT_PS_COLOR); render with the raw ANSI
+# this script uses elsewhere.
 if [ -n "$branch" ]; then
-  if [ -n "$dirty" ]; then
-    branch_part=" ${RED}(${dirty}${branch}${ahead})${RESET}"
-  elif [ -n "$ahead" ]; then
-    branch_part=" ${YELLOW}(${branch}${ahead})${RESET}"
-  elif [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-    branch_part=" ${PINK}(${branch})${RESET}"
-  else
-    branch_part=" ${GREEN}(${branch})${RESET}"
-  fi
+  branch_part=" \033[38;5;${GIT_PS_COLOR}m(${dirty}${branch}${ahead})${RESET}"
 else
   branch_part=""
 fi

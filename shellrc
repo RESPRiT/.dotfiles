@@ -268,30 +268,17 @@ extract() {
 }
 
 # Git prompt info (used by both zsh PROMPT and bash PS1)
-# Color cascade: 210 dirty / 220 ahead-of-remote (clean) / 218 main|master / 2 other.
-# A trailing "^" marks "ahead of upstream" and shows regardless of color (so a
-# dirty+ahead branch reads "(*main^)" in red — dirty wins the color).
+# Git "(branch)" prompt segment. The state logic (branch, *dirty, ^ahead, color
+# cascade) lives in the shared lib so the Claude status line stays in lockstep;
+# here we only map the gathered facts to shell-specific color escapes.
+[ -r "$_dotfiles_dir/lib/git-prompt.sh" ] && . "$_dotfiles_dir/lib/git-prompt.sh"
 _git_branch_info() {
-  local branch dirty="" ahead="" ahead_count
-  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
-  git diff --quiet 2>/dev/null || dirty="*"
-  [ -z "$dirty" ] && [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ] && dirty="*"
-  ahead_count=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null)
-  [ -n "$ahead_count" ] && [ "$ahead_count" -gt 0 ] && ahead="^"
-  local color_code
-  if [ -n "$dirty" ]; then
-    color_code="210"
-  elif [ -n "$ahead" ]; then
-    color_code="220"
-  elif [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
-    color_code="218"
-  else
-    color_code="2"
-  fi
+  command -v _git_prompt_state >/dev/null 2>&1 || return
+  _git_prompt_state || return
   if [ -n "$ZSH_VERSION" ]; then
-    printf ' %%F{%s}(%s%s%s)%%f' "$color_code" "$dirty" "$branch" "$ahead"
+    printf ' %%F{%s}(%s%s%s)%%f' "$GIT_PS_COLOR" "$GIT_PS_DIRTY" "$GIT_PS_BRANCH" "$GIT_PS_AHEAD"
   else
-    printf ' \001\033[38;5;%sm\002(%s%s%s)\001\033[0m\002' "$color_code" "$dirty" "$branch" "$ahead"
+    printf ' \001\033[38;5;%sm\002(%s%s%s)\001\033[0m\002' "$GIT_PS_COLOR" "$GIT_PS_DIRTY" "$GIT_PS_BRANCH" "$GIT_PS_AHEAD"
   fi
 }
 

@@ -18,6 +18,14 @@
 # child of it) and only touch processes in that subtree — sibling sessions are
 # left strictly alone. If we cannot positively identify our own session, we do
 # nothing.
+#
+# Guard against PID reuse: each target's identity (start time + command) is
+# snapshotted before the TERM/KILL grace period and re-verified immediately
+# before every signal. macOS recycles PIDs aggressively, so a chrome PID that
+# exits mid-teardown can be reassigned to an unrelated process (e.g. a Firefox
+# helper) that would otherwise catch the stray signal; a recycled PID fails the
+# identity match and is skipped. Each run appends a summary to
+# .state/chrome-mcp-cleanup.log.
 
 set -u
 
@@ -84,18 +92,71 @@ for t in $targets; do
 done
 targets=$(printf '%s\n' $expanded | awk 'NF' | sort -un | tr '\n' ' ')
 
-# Dry-run hook for testing: print the kill set instead of signalling.
+# Snapshot each target's identity — process start time + full command — so the
+# kill phase can confirm a PID still refers to the same process before signalling.
+proc_identity() {
+  ps -o lstart= -o command= -p "$1" 2>/dev/null
+}
+
+# Audit log under the repo's .state/ (gitignored, rotated at 1MB), alongside the
+# other cleanup logs. Best-effort — a logging failure never fails the hook, and
+# logging is disabled when invoked outside the canonical hook path.
+log=""
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || script_dir=""
+case "$script_dir" in
+  */claude-global/hooks)
+    if mkdir -p "${script_dir%/claude-global/hooks}/.state" 2>/dev/null; then
+      log="${script_dir%/claude-global/hooks}/.state/chrome-mcp-cleanup.log"
+      if [ -f "$log" ]; then
+        sz=$(wc -c <"$log" 2>/dev/null | tr -d ' ')
+        [ "${sz:-0}" -gt 1048576 ] && mv "$log" "$log.1" 2>/dev/null || true
+      fi
+    fi
+    ;;
+esac
+stamp=$(date '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo '?')
+audit() { [ -n "$log" ] && printf '%s\n' "$1" >>"$log" 2>/dev/null || true; }
+
+# Verified work set: "pid<TAB>identity" per line, skipping targets already gone.
+work=$(
+  for t in $targets; do
+    id=$(proc_identity "$t")
+    [ -n "$id" ] || continue
+    printf '%s\t%s\n' "$t" "$id"
+  done
+)
+
+# Dry-run hook for testing: print the kill set and identities, don't signal.
 if [ -n "${CLEANUP_CHROME_MCP_DRYRUN:-}" ]; then
   echo "claude_pid=$claude_pid would kill: $targets"
+  printf '%s\n' "$work" | awk 'NF{print "  - "$0}'
   exit 0
 fi
 
-# Graceful TERM, brief grace period, then KILL any survivor.
-# shellcheck disable=SC2086
-kill -TERM $targets 2>/dev/null || true
+audit "$stamp session=$claude_pid targets=[${targets% }]"
+
+# Signal only PIDs whose live identity still matches the snapshot. A mismatch
+# means the PID was recycled between snapshot and now — never signal it, and
+# record the reuse so it's auditable. Reaching the KILL pass, a target that
+# exited cleanly under TERM no longer matches and is left alone.
+signal_verified() {
+  sig=$1
+  printf '%s\n' "$work" | while IFS=$(printf '\t') read -r pid id; do
+    [ -n "$pid" ] || continue
+    cur=$(proc_identity "$pid")
+    if [ -z "$cur" ]; then
+      :                                   # already exited; nothing to signal
+    elif [ "$cur" = "$id" ]; then
+      kill -"$sig" "$pid" 2>/dev/null && audit "  $sig pid=$pid $id" || true
+    else
+      audit "  SKIP-REUSED pid=$pid was=[$id] now=[$cur]"
+    fi
+  done
+}
+
+# Graceful TERM, brief grace period, then KILL any verified survivor.
+signal_verified TERM
 sleep 0.5
-for t in $targets; do
-  kill -0 "$t" 2>/dev/null && kill -KILL "$t" 2>/dev/null || true
-done
+signal_verified KILL
 
 exit 0

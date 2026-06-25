@@ -20,6 +20,7 @@
   },
   "skipAutoPermissionPrompt": true,
   "skipDangerousModePermissionPrompt": true,
+  "respondToBashCommands": false,
   "effortLevel": "high",
   "tui": "fullscreen",
   "theme": "dark-daltonized",

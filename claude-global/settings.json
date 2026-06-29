@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'test -n \"$CLAUDE_EXIT_FILE\" && cat > \"$CLAUDE_EXIT_FILE\"'"
+            "command": "sh -c 'test -z \"$CLAUDE_EXIT_FILE\" || cat > \"$CLAUDE_EXIT_FILE\"'"
           },
           {
             "type": "command",

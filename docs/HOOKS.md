@@ -38,7 +38,7 @@ The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>
     "hooks": [
       {
         "type": "command",
-        "command": "sh -c 'test -n \"$CLAUDE_EXIT_FILE\" && cat > \"$CLAUDE_EXIT_FILE\"'"
+        "command": "sh -c 'test -z \"$CLAUDE_EXIT_FILE\" || cat > \"$CLAUDE_EXIT_FILE\"'"
       }
     ]
   }
@@ -46,6 +46,8 @@ The `claude()` wrapper in `shellrc` prints a resume hint (`claude --resume <sid>
 ```
 
 `SessionStart`, not `SessionEnd` — the latter empirically missed the `--resume` case, while `SessionStart` fires reliably for `claude -c`, `--resume`, `/clear`, and compact. The hook overwrites the file on each fire, so the captured session ID is always the most recent one (post-`/clear` or post-compact, if applicable).
+
+The guard is `test -z "$CLAUDE_EXIT_FILE" || cat …`, not `test -n "$CLAUDE_EXIT_FILE" && cat …`, so the command exits 0 when the var is unset. When claude launches outside the wrapper (a plain `claude`, a `--no-tmux` launch, or a headless run), `CLAUDE_EXIT_FILE` is never exported; the `&&` form would short-circuit on the failing `test` and exit 1, which Claude Code surfaces as a SessionStart hook error. The `|| ` form no-ops cleanly instead.
 
 A sibling `SessionStart` hook (`claude-global/hooks/session-start-tmux-rename.sh`) reuses the same `CLAUDE_EXIT_FILE`-set signal to detect wrapper-launched tmux and renames the session from its placeholder `claude-$$` (shell PID) to `claude-<first 8 chars of session_id>`, so the real Claude id surfaces in tmux's session list and `choose-tree` picker.
 

@@ -309,6 +309,23 @@ claude() {
     bash "$_dotfiles_dir/claude-global/merge-settings.sh" 2>/dev/null
   fi
 
+  # `--no-tmux` is a wrapper-only flag (Claude Code doesn't define it): when
+  # present, strip it and run claude directly, bypassing the tmux session.
+  local _arg _no_tmux=0
+  for _arg in "$@"; do
+    [ "$_arg" = "--no-tmux" ] && { _no_tmux=1; break; }
+  done
+  if [ "$_no_tmux" = 1 ]; then
+    # Rebuild $@ without --no-tmux (rotate kept args front-to-back, in order).
+    local _n=$#
+    while [ "$_n" -gt 0 ]; do
+      _arg="$1"; shift; _n=$((_n - 1))
+      [ "$_arg" = "--no-tmux" ] || set -- "$@" "$_arg"
+    done
+    command claude "$@"
+    return $?
+  fi
+
   if [ -n "$TMUX" ]; then
     # @claude-running gates a tmux S-Enter → C-j remap that works around a
     # CSI-u Shift+Enter regression in Claude Code 2.1.117+ (see tmux.conf).

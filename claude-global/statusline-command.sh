@@ -93,7 +93,11 @@ elif [ "${used_int:-0}" -ge 50 ]; then
 else
   ctx_color="\033[32m"
 fi
-ctx_part=" ${DIM}|${RESET} ${ctx_color}ctx:${display_pct}%${RESET}"
+# ctx_label is the bare "ctx:NN%" segment; ctx_part prepends the " | " divider
+# that separates it from whatever precedes it on a line. The consolidated wrap
+# starts line 2 at the label, so it uses ctx_label directly (no leading divider).
+ctx_label="${ctx_color}ctx:${display_pct}%${RESET}"
+ctx_part=" ${DIM}|${RESET} ${ctx_label}"
 
 extra=""
 local_script="$HOME/.claude/statusline-command.local.sh"
@@ -221,10 +225,15 @@ if [ -n "$branch" ]; then
   esac
 fi
 
-# Output cascade: consolidated one-liner whenever the dir is branch-named
-# (it's strictly shorter than the full form, so no extra fit check ordering
-# is needed), else full one-liner, else two lines wrapped before the branch
-# with the continuation indented two spaces.
+# Output cascade:
+#   - dir is branch-named (fused_part set): consolidated form. One line when it
+#     fits the pane; otherwise wrap before the status tail so the deduped
+#     dir+branch unit stays whole on line 1 and ctx/session/time move to line 2.
+#     The consolidated form is always shorter than the full form, so once its
+#     one-liner overflows the full one-liner would too — no point falling back
+#     to it (a long branch name otherwise silently drops the dedup entirely).
+#   - otherwise: full one-liner when it fits, else two lines wrapped before the
+#     branch with the continuation indented two spaces.
 # COLUMNS is set by Claude Code >= 2.1.153 before invoking the script; older
 # versions get an 80-col guess.
 visible_len() {
@@ -233,11 +242,18 @@ visible_len() {
 
 cols=${COLUMNS:-80}
 status_tail="${ctx_part}${session_part}${extra}${start_part}${time_part}"
+# Same segments without the leading " | " divider, for the consolidated wrap's
+# line 2 (which has no preceding segment to divide it from).
+status_tail_nosep="${ctx_label}${session_part}${extra}${start_part}${time_part}"
 head_part="${user_host}${dir_part}"
 tail_part="${branch_part}${status_tail}"
 
-if [ -n "$fused_part" ] && [ "$(visible_len "${user_host}${fused_part}${status_tail}")" -le "$cols" ]; then
-  printf '%b\n' "${user_host}${fused_part}${status_tail}"
+if [ -n "$fused_part" ]; then
+  if [ "$(visible_len "${user_host}${fused_part}${status_tail}")" -le "$cols" ]; then
+    printf '%b\n' "${user_host}${fused_part}${status_tail}"
+  else
+    printf '%b\n  %b\n' "${user_host}${fused_part}" "${status_tail_nosep}"
+  fi
 elif [ "$(visible_len "${head_part}${tail_part}")" -le "$cols" ]; then
   printf '%b\n' "${head_part}${tail_part}"
 else

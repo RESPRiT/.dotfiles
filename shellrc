@@ -336,8 +336,10 @@ claude() {
     return $rc
   fi
 
-  # Detect --resume/-r and its optional session id.
-  local _resume_mode="" _resume_id="" _expect_id=0 _arg
+  # Detect --resume/-r and its optional session id. `_arg` is already local
+  # (declared above); don't re-`local` it — in zsh, `local name` with no value
+  # for an already-declared parameter *prints* it (`_arg=''`), leaking to stdout.
+  local _resume_mode="" _resume_id="" _expect_id=0
   for _arg in "$@"; do
     if [ "$_expect_id" = 1 ]; then
       case "$_arg" in
@@ -362,6 +364,11 @@ claude() {
   local _sess_cwd=""
   if [ "$_resume_mode" = "with-id" ]; then
     local _jsonl
+    # A stale/mistyped id matches no file; under zsh's `nomatch` (on by default)
+    # the unmatched glob is a shell error that prints "no matches found" and
+    # bypasses the `2>/dev/null` on ls. no_nomatch passes the pattern through
+    # literally instead, so ls just fails quietly into /dev/null.
+    [ -n "$ZSH_VERSION" ] && setopt local_options no_nomatch
     _jsonl=$(ls "$HOME/.claude/projects"/*/"$_resume_id.jsonl" 2>/dev/null | head -1)
     if [ -n "$_jsonl" ]; then
       _sess_cwd=$(grep -om1 '"cwd":"[^"]*"' "$_jsonl" 2>/dev/null)

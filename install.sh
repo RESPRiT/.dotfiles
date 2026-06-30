@@ -362,6 +362,16 @@ fi
 # claude-global/merge-settings.sh for the jq logic, and CLAUDE.md for rationale.
 mkdir -p "$HOME/.claude"
 
+# Global instructions: committed base + optional machine-local extension,
+# wired together via Claude Code's @import syntax (CLAUDE.md has no native
+# include directive, but imports work the same way). link_shell moves any
+# pre-existing ~/.claude/CLAUDE.md to CLAUDE.local.md so hand-written
+# instructions are preserved and pulled in via the base file's trailing
+# @~/.claude/CLAUDE.local.md import.
+link_shell "$DOTFILES/claude-global/CLAUDE.md" \
+  "$HOME/.claude/CLAUDE.md" \
+  "$HOME/.claude/CLAUDE.local.md"
+
 # Status line: committed portable base + optional machine-local extension.
 # The base script invokes ~/.claude/statusline-command.local.sh (if present)
 # to append per-machine segments (e.g. metacog/trace). On first install,

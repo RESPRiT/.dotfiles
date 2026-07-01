@@ -62,6 +62,7 @@ decision_label() {
     ssh-multiplex)    echo "SSH connection multiplexing for github.com" ;;
     tmux-upgrade)     echo "tmux 3.5+ upgrade" ;;
     keychain)         echo "keychain (SSH agent manager)" ;;
+    tailscale-sshd)   echo "SSH over Tailscale (sshd + key-only auth)" ;;
     zsh-install)      echo "installing zsh" ;;
     zsh-default)      echo "setting zsh as default shell" ;;
     rust)             echo "Rust toolchain" ;;
@@ -72,6 +73,57 @@ decision_label() {
     wsl-open)         echo "wslview (open links/files in Windows)" ;;
     *)                echo "$1" ;;
   esac
+}
+
+# Helpers shared by is_satisfied(tailscale-sshd) and the SSH-over-Tailscale
+# step below, so the "already set up" signal can't drift from what the step
+# checks before running.
+_sshd_listening() {
+  # bash's /dev/tcp: the open succeeds iff something accepts on localhost:22.
+  ( : < /dev/tcp/127.0.0.1/22 ) 2>/dev/null
+}
+
+# Every non-comment key in $1 is present in $2, matched on "type blob" so a
+# differing comment doesn't read as a missing key.
+_authorized_keys_synced() {
+  local _src="$1" _dst="$2" _line _blob
+  [ -f "$_src" ] || return 0
+  while IFS= read -r _line; do
+    case "$_line" in ''|\#*) continue ;; esac
+    _blob="$(printf '%s' "$_line" | awk '{print $1" "$2}')"
+    { [ -f "$_dst" ] && grep -qF "$_blob" "$_dst"; } || return 1
+  done < "$_src"
+}
+
+_sshd_ready() {
+  _sshd_listening \
+    && _authorized_keys_synced "$DOTFILES/ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+}
+
+# Append any key from $1 that $2 lacks; creates $2 (600, dir 700) if missing.
+_merge_authorized_keys() {
+  local _src="$1" _dst="$2" _line _blob _added=0
+  [ -f "$_src" ] || return 0
+  mkdir -p "$(dirname "$_dst")"
+  chmod 700 "$(dirname "$_dst")"
+  [ -f "$_dst" ] || touch "$_dst"
+  chmod 600 "$_dst"
+  # A dst without a trailing newline would glue the first appended key onto
+  # its last line; normalize before appending.
+  if [ -s "$_dst" ] && [ -n "$(tail -c 1 "$_dst")" ]; then
+    echo >> "$_dst"
+  fi
+  while IFS= read -r _line; do
+    case "$_line" in ''|\#*) continue ;; esac
+    _blob="$(printf '%s' "$_line" | awk '{print $1" "$2}')"
+    if ! grep -qF "$_blob" "$_dst"; then
+      printf '%s\n' "$_line" >> "$_dst"
+      _added=$((_added + 1))
+    fi
+  done < "$_src"
+  if [ "$_added" -gt 0 ]; then
+    echo "Authorized $_added new key(s) in $_dst"
+  fi
 }
 
 # Returns 0 if the underlying state for a declined decision is now satisfied,
@@ -112,6 +164,7 @@ is_satisfied() {
       [ -S "$HOME/.1password/agent.sock" ] && return 0
       [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null && return 0
       return 1 ;;
+    tailscale-sshd) _sshd_ready ;;
     zsh-install)    command -v zsh &>/dev/null ;;
     zsh-default)    [ "$(basename "${SHELL:-}")" = "zsh" ] ;;
     rust)           command -v cargo &>/dev/null ;;
@@ -532,6 +585,109 @@ if [ "$_install_keychain" = true ]; then
   fi
 fi
 unset _install_keychain _kc_answer
+
+# SSH over Tailscale — enable the OS sshd and authorize the committed public
+# keys (ssh/authorized_keys) so the machines on the tailnet can SSH into this
+# one. Tailscale owns the network layer (its ACLs decide who reaches port 22);
+# this step covers the host layer: sshd on, key-only auth, repo keys trusted.
+# Windows is handled by powershell/install.ps1; WSL defers to the Windows host
+# (sshd inside WSL isn't reachable at the Windows machine's tailnet address).
+_sshd_os="$(uname -s)"
+_sshd_supported=true
+if [ "$_sshd_os" != "Darwin" ] && [ "$_sshd_os" != "Linux" ]; then
+  _sshd_supported=false
+elif grep -qi microsoft /proc/version 2>/dev/null; then
+  _sshd_supported=false
+fi
+
+if [ "$_sshd_supported" = false ]; then
+  : # Windows/WSL/other — not this installer's job
+elif _sshd_ready; then
+  skip_msg "sshd already enabled and committed keys authorized"
+elif was_declined tailscale-sshd; then
+  skip_msg "SSH over Tailscale already declined"
+else
+  read -rp "${PROMPT_COLOR}Enable SSH access over Tailscale (sshd, key-only auth; uses sudo)? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _sshd_answer
+  if [[ "$_sshd_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Setting up sshd...${RESET}"
+    if ! command -v tailscale &>/dev/null && [ ! -d "/Applications/Tailscale.app" ]; then
+      echo "Note: Tailscale not detected — sshd will only be reachable on networks this machine is already on. Install it from https://tailscale.com/download" >&2
+    fi
+
+    # Authorize the committed keys before disabling password auth, so the
+    # key-only drop-in can't create a lockout window.
+    _merge_authorized_keys "$DOTFILES/ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+
+    # Key-only auth via a drop-in. Named 010-* so it sorts — and therefore
+    # wins, first-match per keyword — ahead of macOS's 100-macos.conf, which
+    # sets PasswordAuthentication yes.
+    if grep -q '^Include /etc/ssh/sshd_config.d/' /etc/ssh/sshd_config 2>/dev/null; then
+      sudo mkdir -p /etc/ssh/sshd_config.d
+      sudo tee /etc/ssh/sshd_config.d/010-dotfiles.conf >/dev/null <<'EOF'
+# Managed by dotfiles install.sh (SSH over Tailscale step). Tailscale ACLs
+# gate the network layer; these settings gate authentication.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOF
+      echo "Wrote /etc/ssh/sshd_config.d/010-dotfiles.conf (key-only auth)"
+    else
+      echo "Warning: /etc/ssh/sshd_config has no sshd_config.d include; skipped key-only hardening" >&2
+    fi
+
+    if [ "$_sshd_os" = "Darwin" ]; then
+      # macOS ships sshd; Remote Login just turns it on. launchd spawns sshd
+      # per connection, so the drop-in above needs no reload to take effect.
+      if ! _sshd_listening; then
+        # systemsetup can silently no-op when the terminal lacks Full Disk
+        # Access, so poll port 22 for the truth and fall back to launchctl.
+        sudo systemsetup -setremotelogin on >/dev/null 2>&1 || true
+        for _i in 1 2 3; do _sshd_listening && break; sleep 1; done
+        if ! _sshd_listening; then
+          sudo launchctl enable system/com.openssh.sshd 2>/dev/null || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true
+          for _i in 1 2 3; do _sshd_listening && break; sleep 1; done
+        fi
+        unset _i
+      fi
+    else
+      if [ ! -x /usr/sbin/sshd ] && ! command -v sshd &>/dev/null; then
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update && sudo apt-get install -y openssh-server
+        elif command -v dnf &>/dev/null; then
+          sudo dnf install -y openssh-server
+        elif command -v pacman &>/dev/null; then
+          sudo pacman -S --needed --noconfirm openssh
+        elif command -v apk &>/dev/null; then
+          sudo apk add openssh-server
+        else
+          echo "No supported package manager found; install openssh-server manually" >&2
+        fi
+      fi
+      if command -v systemctl &>/dev/null; then
+        # Unit name is ssh on Debian/Ubuntu, sshd on Fedora/Arch/Alpine.
+        sudo systemctl enable --now ssh 2>/dev/null \
+          || sudo systemctl enable --now sshd 2>/dev/null \
+          || echo "Warning: could not enable the ssh/sshd unit" >&2
+        # Pick up the key-only drop-in if sshd was already running.
+        sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd 2>/dev/null || true
+      else
+        echo "Warning: no systemctl; enable sshd via this machine's init system manually" >&2
+      fi
+    fi
+
+    if _sshd_listening; then
+      echo "sshd is up — reachable over the tailnet as $(hostname -s 2>/dev/null || hostname)"
+    else
+      echo "Warning: sshd is not listening on port 22 — enable it manually, then re-run install.sh" >&2
+    fi
+  else
+    record_decline tailscale-sshd
+    skip_msg "SSH over Tailscale already declined"
+  fi
+  unset _sshd_answer
+fi
+unset _sshd_os _sshd_supported
 
 # zsh
 if command -v zsh &>/dev/null; then

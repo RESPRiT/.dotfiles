@@ -236,6 +236,119 @@ function Add-WTNewlineBinding([string]$BindingFile) {
 
 Add-WTNewlineBinding (Join-Path $Dotfiles 'powershell\windows-terminal-newline.json')
 
+# === SSH over Tailscale: Windows OpenSSH server ===
+# Counterpart to install.sh's tailscale-sshd step (same decision key, shared
+# .state/decisions). Enables the bundled OpenSSH server, authorizes the
+# committed public keys (../ssh/authorized_keys), turns off password auth, and
+# defaults SSH sessions to pwsh instead of cmd.exe. Tailscale ACLs gate who
+# reaches port 22; this covers the host side. Needs an elevated session
+# (capability install, service control, HKLM, ProgramData ACLs).
+function Test-IsAdmin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Append any key from $Src that $Dst lacks, matching on "type blob" so a
+# differing comment doesn't create a duplicate. Keys added by hand survive.
+function Merge-AuthorizedKeys([string]$Src, [string]$Dst) {
+    if (-not (Test-Path -LiteralPath $Src)) { return }
+    New-Item -ItemType Directory -Path (Split-Path $Dst -Parent) -Force | Out-Null
+    $existing = @()
+    if (Test-Path -LiteralPath $Dst) { $existing = @(Get-Content -LiteralPath $Dst) }
+    $added = 0
+    foreach ($line in Get-Content -LiteralPath $Src) {
+        if ($line -notmatch '^\s*(ssh|ecdsa)-') { continue }
+        $blob = (($line -split '\s+')[0..1]) -join ' '
+        if (-not ($existing | Where-Object { $_.Contains($blob) })) {
+            Add-Content -LiteralPath $Dst -Value $line
+            $added++
+        }
+    }
+    if ($added -gt 0) { Write-Host "Authorized $added new key(s) in $Dst" }
+}
+
+# "Already set up" signal: sshd running + auto-start, and every committed key
+# present in administrators_authorized_keys (unreadable without elevation ->
+# treated as not-synced, so the prompt still appears in unelevated runs).
+function Test-SshdReady([string]$KeysFile, [string]$AdminKeys) {
+    $svc = Get-Service sshd -ErrorAction SilentlyContinue
+    if (-not $svc -or $svc.Status -ne 'Running' -or $svc.StartType -ne 'Automatic') { return $false }
+    if (-not (Test-Path -LiteralPath $KeysFile)) { return $true }
+    try { $existing = @(Get-Content -LiteralPath $AdminKeys -ErrorAction Stop) } catch { return $false }
+    foreach ($line in Get-Content -LiteralPath $KeysFile) {
+        if ($line -notmatch '^\s*(ssh|ecdsa)-') { continue }
+        $blob = (($line -split '\s+')[0..1]) -join ' '
+        if (-not ($existing | Where-Object { $_.Contains($blob) })) { return $false }
+    }
+    return $true
+}
+
+$sshKeysFile   = Join-Path $Dotfiles 'ssh\authorized_keys'
+$adminKeysFile = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+if (Test-SshdReady $sshKeysFile $adminKeysFile) {
+    Skip-Msg 'sshd already enabled and committed keys authorized'
+} elseif (Confirm-YN 'Enable SSH access over Tailscale (OpenSSH server, key-only auth)?' 'tailscale-sshd') {
+    if (-not (Test-IsAdmin)) {
+        Write-Host "${NColor}SSH setup needs an elevated session; re-run install.ps1 as Administrator${Reset}"
+    } else {
+        if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+            # DISM cmdlets can be flaky under pwsh 7; fall back to Windows PowerShell.
+            try { Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null }
+            catch { powershell.exe -NoProfile -Command "Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null" }
+            Write-Host 'Installed the OpenSSH Server capability'
+        }
+
+        # Authorize committed keys before password auth goes off, so key-only
+        # auth can't create a lockout window. Admin accounts authenticate
+        # against ProgramData\ssh\administrators_authorized_keys (per the
+        # default 'Match Group administrators' block), not ~\.ssh — cover both.
+        Merge-AuthorizedKeys $sshKeysFile $adminKeysFile
+        Merge-AuthorizedKeys $sshKeysFile (Join-Path $HOME '.ssh\authorized_keys')
+        # sshd rejects the admin keys file unless only SYSTEM + Administrators
+        # can touch it. SIDs, not names, so non-English locales work.
+        icacls "$adminKeysFile" /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null
+
+        # Key-only auth. The default sshd_config ships a commented
+        # '#PasswordAuthentication yes'; flip the first such line, or insert
+        # ahead of the Match block (a directive appended after 'Match' would
+        # be scoped to that block instead of applying globally).
+        $conf = Join-Path $env:ProgramData 'ssh\sshd_config'
+        if ((Test-Path -LiteralPath $conf) -and
+            -not (@(Get-Content -LiteralPath $conf) | Where-Object { $_ -match '^\s*PasswordAuthentication\s+no\b' })) {
+            $lines = @(Get-Content -LiteralPath $conf)
+            Copy-Item -LiteralPath $conf -Destination "$conf.dotfiles-$(Get-Date -Format yyyyMMddHHmmss).bak"
+            $idx = 0..($lines.Count - 1) | Where-Object { $lines[$_] -match '^\s*#?\s*PasswordAuthentication\b' } | Select-Object -First 1
+            if ($null -ne $idx) {
+                $lines[$idx] = 'PasswordAuthentication no'
+            } else {
+                $matchIdx = 0..($lines.Count - 1) | Where-Object { $lines[$_] -match '^\s*Match\b' } | Select-Object -First 1
+                if ($null -ne $matchIdx -and $matchIdx -gt 0) {
+                    $lines = $lines[0..($matchIdx - 1)] + 'PasswordAuthentication no' + $lines[$matchIdx..($lines.Count - 1)]
+                } else {
+                    $lines += 'PasswordAuthentication no'
+                }
+            }
+            Set-Content -LiteralPath $conf -Value $lines
+            Write-Host 'Set PasswordAuthentication no in sshd_config'
+        }
+
+        # SSH sessions land in pwsh (falling back to Windows PowerShell).
+        $shell = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $shell) { $shell = (Get-Command powershell).Source }
+        New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
+        Set-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value $shell
+
+        Set-Service sshd -StartupType Automatic
+        Restart-Service sshd  # also picks up the config change above
+        # The capability install normally creates this rule; ensure it exists.
+        if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' `
+                -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+        }
+        Write-Host "sshd is up - reachable over the tailnet as $env:COMPUTERNAME"
+    }
+}
+
 # === Seed migration tracker so post-merge.sh doesn't replay old migrations
 # the first time someone pulls on a fresh Windows clone. We don't run the
 # bash migrations from here — they're POSIX and most aren't relevant on

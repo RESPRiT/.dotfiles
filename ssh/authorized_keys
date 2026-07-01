@@ -1,0 +1,16 @@
+# SSH public keys trusted by every machine that runs the installers' opt-in
+# "SSH over Tailscale" step. Merged into ~/.ssh/authorized_keys (POSIX) and
+# ProgramData\ssh\administrators_authorized_keys (Windows) — merge is
+# append-only, so keys added by hand on a machine are preserved.
+#
+# Rules for this file:
+#   - Public keys only. Never commit a private key.
+#   - Keep comments as neutral labels (no user@host — this repo is public,
+#     and usernames/hostnames are half of what an SSH attacker needs).
+#   - To trust a new machine that can't use the 1Password agent: append its
+#     public key here, push, and re-run the installer on the other machines.
+#
+# The 1password key is the 1Password SSH agent key — available on any machine
+# signed in to 1Password, which is why it's the only key most machines need.
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILCDUgbQ71PZg/i/sSgrrbcbQR4ku55CpUWA50mmTT77 1password
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP3lPQy46ZElQU3zmGiJ12/OxmRiPK4do9mkBqdqSa6z noom

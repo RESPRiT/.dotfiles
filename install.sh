@@ -63,6 +63,7 @@ decision_label() {
     tmux-upgrade)     echo "tmux 3.5+ upgrade" ;;
     keychain)         echo "keychain (SSH agent manager)" ;;
     tailscale-sshd)   echo "SSH over Tailscale (sshd + key-only auth)" ;;
+    wsl-sshd)         echo "SSH into WSL over Tailscale (native sshd on 2222)" ;;
     zsh-install)      echo "installing zsh" ;;
     zsh-default)      echo "setting zsh as default shell" ;;
     rust)             echo "Rust toolchain" ;;
@@ -79,8 +80,18 @@ decision_label() {
 # step below, so the "already set up" signal can't drift from what the step
 # checks before running.
 _sshd_listening() {
-  # bash's /dev/tcp: the open succeeds iff something accepts on localhost:22.
-  ( : < /dev/tcp/127.0.0.1/22 ) 2>/dev/null
+  # bash's /dev/tcp: the open succeeds iff something accepts on localhost:PORT
+  # (default 22; pass a port for a non-default listener — WSL uses 2222).
+  # Under WSL mirrored networking a connect to a CLOSED localhost port hangs
+  # for many seconds instead of refusing immediately, so cap it with `timeout`
+  # where available (all Linux/WSL). macOS has no `timeout` but refuses closed
+  # ports instantly, so it falls through to the unbounded probe with no hang.
+  local _port="${1:-22}"
+  if command -v timeout &>/dev/null; then
+    timeout -s KILL 2 bash -c ': < /dev/tcp/127.0.0.1/"$0"' "$_port" 2>/dev/null
+  else
+    ( : < /dev/tcp/127.0.0.1/"$_port" ) 2>/dev/null
+  fi
 }
 
 # Every non-comment key in $1 is present in $2, matched on "type blob" so a
@@ -98,6 +109,34 @@ _authorized_keys_synced() {
 _sshd_ready() {
   _sshd_listening \
     && _authorized_keys_synced "$DOTFILES/ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+}
+
+# --- SSH directly into WSL (mirrored networking) -----------------------------
+# The tailscale-sshd step defers on WSL because, under the default NAT mode,
+# sshd inside WSL isn't reachable at the Windows machine's tailnet address.
+# Mirrored networking removes that barrier: it mirrors the host's interfaces
+# (including Tailscale's) into the distro, so a listener here is reachable at
+# the tailnet IP with no portproxy. A dedicated port keeps it from colliding
+# with a Windows-host sshd on 22 (powershell/install.ps1).
+_WSL_SSHD_PORT=2222
+
+# loopback0 is the interface WSL adds only in mirrored mode — the runtime
+# signal that the mirrored architecture is active.
+_wsl_mirrored() {
+  grep -qi microsoft /proc/version 2>/dev/null && ip link show loopback0 &>/dev/null
+}
+
+_wsl_sshd_ready() {
+  _sshd_listening "$_WSL_SSHD_PORT" \
+    && _authorized_keys_synced "$DOTFILES/ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+}
+
+# First tailnet (100.64.0.0/10 CGNAT) IPv4 on any interface. In mirrored mode
+# the host's Tailscale address is mirrored in, so this surfaces it for the
+# success message and a "Tailscale not up on the host?" warning.
+_tailnet_ip() {
+  ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+    | grep -Em1 '^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.'
 }
 
 # Append any key from $1 that $2 lacks; creates $2 (600, dir 700) if missing.
@@ -165,6 +204,7 @@ is_satisfied() {
       [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l &>/dev/null && return 0
       return 1 ;;
     tailscale-sshd) _sshd_ready ;;
+    wsl-sshd)       _wsl_sshd_ready ;;
     zsh-install)    command -v zsh &>/dev/null ;;
     zsh-default)    [ "$(basename "${SHELL:-}")" = "zsh" ] ;;
     rust)           command -v cargo &>/dev/null ;;
@@ -590,8 +630,9 @@ unset _install_keychain _kc_answer
 # keys (ssh/authorized_keys) so the machines on the tailnet can SSH into this
 # one. Tailscale owns the network layer (its ACLs decide who reaches port 22);
 # this step covers the host layer: sshd on, key-only auth, repo keys trusted.
-# Windows is handled by powershell/install.ps1; WSL defers to the Windows host
-# (sshd inside WSL isn't reachable at the Windows machine's tailnet address).
+# Windows is handled by powershell/install.ps1. WSL is handled by the separate
+# wsl-sshd step below (native sshd, which mirrored networking makes reachable
+# at the tailnet IP); under NAT mode WSL still defers to the Windows installer.
 _sshd_os="$(uname -s)"
 _sshd_supported=true
 if [ "$_sshd_os" != "Darwin" ] && [ "$_sshd_os" != "Linux" ]; then
@@ -688,6 +729,92 @@ EOF
   unset _sshd_answer
 fi
 unset _sshd_os _sshd_supported
+
+# SSH directly into WSL over Tailscale (mirrored networking only). See the
+# _wsl_* helpers near the top for why mirrored mode is the enabler and why we
+# use a dedicated port. Inbound still needs a Hyper-V firewall allow on the
+# Windows side, which needs elevation we don't have from here — so we finish
+# the Linux side and print the exact elevated command for the user to run.
+if ! grep -qi microsoft /proc/version 2>/dev/null; then
+  : # not WSL — the tailscale-sshd step above owns macOS/Linux
+elif ! _wsl_mirrored; then
+  : # WSL without mirrored networking — defers to powershell/install.ps1
+elif _wsl_sshd_ready; then
+  skip_msg "WSL sshd already listening on $_WSL_SSHD_PORT with committed keys authorized"
+elif was_declined wsl-sshd; then
+  skip_msg "SSH into WSL already declined"
+else
+  read -rp "${PROMPT_COLOR}Enable SSH directly into WSL over Tailscale (native sshd on port $_WSL_SSHD_PORT, key-only auth; uses sudo)? y/${N_COLOR}[N]${PROMPT_COLOR}${RESET} " _wsl_sshd_answer
+  if [[ "$_wsl_sshd_answer" =~ ^[Yy]$ ]]; then
+    echo "${YES_COLOR}(Selected y) Setting up sshd inside WSL...${RESET}"
+    if [ -z "$(_tailnet_ip)" ]; then
+      echo "Note: no tailnet (100.x) address is mirrored into WSL — make sure Tailscale is running on the Windows host, or this will only be reachable on the LAN." >&2
+    fi
+
+    # Authorize the committed keys before disabling password auth, so the
+    # key-only config can't create a lockout window (mirrors tailscale-sshd).
+    _merge_authorized_keys "$DOTFILES/ssh/authorized_keys" "$HOME/.ssh/authorized_keys"
+
+    if [ ! -x /usr/sbin/sshd ] && ! command -v sshd &>/dev/null; then
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get update && sudo apt-get install -y openssh-server
+      elif command -v dnf &>/dev/null; then
+        sudo dnf install -y openssh-server
+      elif command -v pacman &>/dev/null; then
+        sudo pacman -S --needed --noconfirm openssh
+      elif command -v apk &>/dev/null; then
+        sudo apk add openssh-server
+      else
+        echo "No supported package manager found; install openssh-server manually" >&2
+      fi
+    fi
+
+    # Dedicated port + key-only auth via a drop-in. Ubuntu's main sshd_config
+    # leaves Port commented, so this is the only Port directive — sshd listens
+    # on $_WSL_SSHD_PORT alone and can't collide with a Windows-host sshd on 22.
+    if grep -q '^Include /etc/ssh/sshd_config.d/' /etc/ssh/sshd_config 2>/dev/null; then
+      sudo mkdir -p /etc/ssh/sshd_config.d
+      sudo tee /etc/ssh/sshd_config.d/010-dotfiles.conf >/dev/null <<EOF
+# Managed by dotfiles install.sh (SSH into WSL step). Mirrored networking makes
+# this listener reachable at the tailnet IP; Tailscale ACLs gate the network
+# layer and these settings gate authentication.
+Port $_WSL_SSHD_PORT
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOF
+      echo "Wrote /etc/ssh/sshd_config.d/010-dotfiles.conf (port $_WSL_SSHD_PORT, key-only auth)"
+    else
+      echo "Warning: /etc/ssh/sshd_config has no sshd_config.d include; skipped port/key-only config" >&2
+    fi
+
+    if command -v systemctl &>/dev/null; then
+      # Unit name is ssh on Debian/Ubuntu, sshd on Fedora/Arch/Alpine.
+      sudo systemctl enable --now ssh 2>/dev/null \
+        || sudo systemctl enable --now sshd 2>/dev/null \
+        || echo "Warning: could not enable the ssh/sshd unit" >&2
+      # Restart (not reload) so the new Port takes effect if sshd was running.
+      sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || true
+    else
+      echo "Warning: no systemctl (is systemd enabled in /etc/wsl.conf?); start sshd manually" >&2
+    fi
+
+    if _sshd_listening "$_WSL_SSHD_PORT"; then
+      _tip="$(_tailnet_ip || true)"  # || true: bare assignment must not trip set -e when no tailnet IP
+      echo "sshd is up inside WSL on port $_WSL_SSHD_PORT."
+      echo "${BANNER_COLOR}One more step — run this in an ELEVATED PowerShell on the Windows host to open the Hyper-V firewall:${RESET}"
+      echo "  New-NetFirewallHyperVRule -Name 'WSL-SSH-$_WSL_SSHD_PORT' -DisplayName 'WSL SSH ($_WSL_SSHD_PORT)' -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts $_WSL_SSHD_PORT"
+      [ -n "$_tip" ] && echo "Then from another tailnet machine: ssh -p $_WSL_SSHD_PORT $USER@$_tip"
+      unset _tip
+    else
+      echo "Warning: sshd is not listening on port $_WSL_SSHD_PORT — check 'sudo systemctl status ssh' and re-run install.sh" >&2
+    fi
+  else
+    record_decline wsl-sshd
+    skip_msg "SSH into WSL already declined"
+  fi
+  unset _wsl_sshd_answer
+fi
 
 # zsh
 if command -v zsh &>/dev/null; then

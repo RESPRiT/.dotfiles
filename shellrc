@@ -389,8 +389,16 @@ claude() {
   # SessionEnd was empirically missing the resume case. The hook's
   # `cat > file` overwrites on each fire, so the file ends up with the
   # most recent session_id (post-/clear or post-compact, if applicable).
+  # The file lives under ~/.local/state, NOT $TMPDIR: macOS reaps
+  # /var/folders temp files untouched for 3 days, and the file is written
+  # once at SessionStart — a wrapper session alive longer than that would
+  # lose it and exit without the resume hint. The find sweep clears
+  # leftovers from crashed terminals (normal exits rm the file below).
+  local exit_dir="$HOME/.local/state/claude-wrapper"
+  mkdir -p "$exit_dir" || return 1
+  find "$exit_dir" -name 'claude-exit.*' -type f -mtime +7 -delete 2>/dev/null
   local exit_capture
-  exit_capture=$(mktemp "${TMPDIR:-/tmp}/claude-exit.XXXXXX") || return 1
+  exit_capture=$(mktemp "$exit_dir/claude-exit.XXXXXX") || return 1
   # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux
   # only propagates vars in `update-environment` from the calling shell into
   # new sessions; `CLAUDE_CODE_TMUX_TRUECOLOR` isn't on that list, so it'd

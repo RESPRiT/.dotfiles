@@ -7,6 +7,8 @@
 #             deduped via a per-session sentinel in $TMPDIR.
 #   comment — every comment-posting call: compact comment rules appended.
 #   body    — every PR create / body edit: compact body-structure rules appended.
+#   mechanics — on PR creation: the PR-mechanics reference memory, read live
+#               from the FDP project memory dir, once per session (sentinel).
 #
 # Wired via the PreToolUse "Bash" and "mcp__plugin_github_github__.*" matchers
 # in claude-global/settings.json.
@@ -17,11 +19,12 @@ tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
 tier=""
+create=0
 case "$tool" in
   Bash)
     [ -n "$cmd" ] || exit 0
     case "$cmd" in
-      *"gh pr create"*) tier=body ;;
+      *"gh pr create"*) tier=body; create=1 ;;
       *"gh pr edit"*)
         case "$cmd" in
           *--body*) tier=body ;;
@@ -40,7 +43,9 @@ case "$tool" in
       *) exit 0 ;;
     esac
     ;;
-  mcp__plugin_github_github__create_pull_request|mcp__plugin_github_github__update_pull_request)
+  mcp__plugin_github_github__create_pull_request)
+    tier=body; create=1 ;;
+  mcp__plugin_github_github__update_pull_request)
     tier=body ;;
   mcp__plugin_github_github__add_issue_comment|mcp__plugin_github_github__add_reply_to_pull_request_comment|mcp__plugin_github_github__add_comment_to_pending_review|mcp__plugin_github_github__pull_request_review_write)
     tier=comment ;;
@@ -81,6 +86,23 @@ if [ -n "$msg" ] && [ -n "$extra" ]; then
 $extra"
 elif [ -n "$extra" ]; then
   msg="$extra"
+fi
+
+# On PR creation, attach the PR-mechanics reference (babysitting, CI watching,
+# comment commands) — read live from the canonical memory file so there is no
+# second copy to maintain. Once per session.
+if [ "$create" = "1" ]; then
+  mech_file="$HOME/.claude/projects/-Users-harrison-numeric-io-fdp/memory/reference_pr_mechanics.md"
+  mech_sentinel="${TMPDIR:-/tmp}/claude-pr-mechanics-${session}"
+  if [ -f "$mech_file" ] && [ ! -f "$mech_sentinel" ]; then
+    : > "$mech_sentinel" 2>/dev/null || true
+    mech=$(cat "$mech_file")
+    msg="${msg:+$msg
+
+}PR mechanics reference (for working the PR you are creating):
+
+$mech"
+  fi
 fi
 
 [ -n "$msg" ] || exit 0

@@ -132,6 +132,15 @@
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-pr-authoring-reminder.sh\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_github_github__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-pr-authoring-reminder.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

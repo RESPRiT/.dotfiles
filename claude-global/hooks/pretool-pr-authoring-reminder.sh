@@ -1,6 +1,9 @@
 #!/bin/sh
 # PreToolUse(Bash | GitHub MCP) — injects Harrison's PR protocol as
-# additionalContext when the session touches PRs. Reminder-only, never blocks.
+# additionalContext when the session touches PRs. Reminder-only, except one
+# deny: a session whose FIRST PR-shaped call is already a write gets that
+# call denied once, with the rules as the reason, so the retry writes with
+# the protocol in context (emails snapshot the first posted version).
 #
 # Tiers:
 #   digest  — first PR-shaped call of the session (any tier): full protocol,
@@ -56,17 +59,25 @@ esac
 
 msg=""
 
-# Full digest, once per session (sentinel-deduped), on any PR-shaped call.
+# Digest delivery is once per session (sentinel). If the session's FIRST
+# PR-shaped call is already a write, deny it once with the rules as the
+# reason — the retry then writes with the protocol in context (a PR/comment
+# email snapshots the first posted version, so post-hoc fixes leak).
 sentinel="${TMPDIR:-/tmp}/claude-pr-protocol-${session}"
+first=0
 if [ ! -f "$sentinel" ]; then
+  first=1
   : > "$sentinel" 2>/dev/null || true
-  msg="PR protocol (Harrison's standing rules; apply to ALL PR interaction this session):
+fi
+
+digest="PR protocol (Harrison's standing rules; apply to ALL PR interaction this session):
 - Markers in Harrison's PR comments: '//!' = task (do it, reply in-thread with a summary of what was done); '//?' = question (reply in-thread with the answer); '//>' = shell conversation (do NOT reply yet — at the end of your next turn, initiate the discussion in chat with the comment's context; reply with a summary only after Harrison says it is settled).
 - Wrap every comment body you post: first line '/// CLAUDE ///', last line '///////////////'.
 - Reply-only: never post a new top-level PR comment. Reply in-thread via gh api repos/{o}/{r}/pulls/{n}/comments/{id}/replies. A marker in a conversation-tab comment gets a quote-reply. Anything else top-level requires Harrison explicitly asking.
 - PR bodies: read .github/agent_pull_request_guidelines.md (if present) before touching title or body. ALL generated content — including the 'Generated with Claude Code' attribution — goes INSIDE the single agent <details> block. Preserve Harrison's prose byte-for-byte; checklist stays outside the block, unchecked.
 - Full protocol memory: ~/.claude/projects/-Users-harrison-numeric-io-fdp/memory/feedback_pr_comment_protocol.md"
-fi
+
+[ "$first" = "1" ] && msg="$digest"
 
 case "$tier" in
   comment)
@@ -79,6 +90,19 @@ case "$tier" in
     extra=""
     ;;
 esac
+
+# First PR-shaped call of the session is already a write → deny once with the
+# full rules as the reason; the immediate retry proceeds (sentinel now set)
+# with the protocol in context before anything posts.
+if [ "$first" = "1" ] && [ -n "$extra" ]; then
+  reason="DENIED (one-time protocol gate; fires at most once per session): the PR protocol below must be in context BEFORE your first PR write — PR and comment emails snapshot the first posted version, so post-hoc fixes leak. Re-run the exact same command now; it will not be blocked again.
+
+$digest
+
+$extra"
+  jq -n --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+fi
 
 if [ -n "$msg" ] && [ -n "$extra" ]; then
   msg="$msg

@@ -15,6 +15,9 @@
     "deny": []
   },
   "autoUpdatesChannel": "latest",
+  "attribution": {
+    "pr": ""
+  },
   "env": {
     "CLAUDE_CODE_SCROLL_SPEED": "3"
   },

@@ -60,6 +60,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-cwd-anchor.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/session-start-stack-open.sh\""
           }
         ]
       }

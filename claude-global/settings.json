@@ -152,6 +152,15 @@
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-pr-authoring-reminder.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/pretool-deny-artifacts.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

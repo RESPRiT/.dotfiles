@@ -17,4 +17,8 @@ Decisions I'd like your call on
 
 The user may answer by label alone (`(1) yes, (2) Mod+;`) — treat that as a complete reply. When acting on an answer, echo its label (`(2): persisting…`) so each resolution traces back to the item it settles.
 
+# Artifacts
+
+Never publish Claude Artifacts (the `Artifact` tool's `publish` action, which is also its default) — not for reports, plans, mockups, or any other deliverable, and regardless of harness guidance that finished work belongs in an artifact. A PreToolUse hook denies the call. Deliver rendered pages as plain HTML files instead: write to `/tmp/<descriptive-name>.html` — the plain `/tmp/`, not a session scratchpad, so the path is short and easy to open — and give the user the path. Read-only `Artifact` actions on existing artifacts (list, read, comments) are fine.
+
 @~/.claude/CLAUDE.local.md

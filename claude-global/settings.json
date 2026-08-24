@@ -87,6 +87,10 @@
           {
             "type": "command",
             "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-cwd-report.sh\""
+          },
+          {
+            "type": "command",
+            "command": "sh \"$HOME/.dotfiles/claude-global/hooks/user-prompt-reply-conventions.sh\""
           }
         ]
       }

@@ -22,6 +22,7 @@ import sys
 import tempfile
 import termios
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".local/state/claude-sessions"
@@ -37,6 +38,11 @@ DIM = "\x1b[2m"
 # A selection dialog also renders "❯ 1. Yes" between rules; only a bare ❯ is the prompt.
 PROMPT_RE = re.compile(r"^❯(?!\s*\d+\.)")
 LOSSY_RE = re.compile(r"\[(Pasted text|Image) #\d+")
+TASK_RE = re.compile(r"eval '((?:[^']|'\\'')*)' < /dev/null")
+# Option labels of Claude's "exit while in a worktree" dialog; anything but keep runs the remove hook.
+KEEP_RE = re.compile(r"^(❯\s*)?\d+\.\s+Keep worktree(, end tmux session)?\s*$")
+OPTION_RE = re.compile(r"^(❯\s*)?\d+\.\s+\S")
+EXIT_TIMEOUT = 30
 RULE_MIN = 20
 PASTE_BUF = "claude-sessions"
 # A down that stopped partway leaves exited sessions only in the snapshot; carry them forward.
@@ -74,6 +80,19 @@ def proc_cwd(pid):
         if line.startswith("n"):
             return line[1:]
     return None
+
+
+def background_tasks(pid):
+    """Commands of background Bash/Monitor shells the claude process owns; they die with it."""
+    r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True)
+    tasks = []
+    for line in r.stdout.splitlines():
+        child, ppid, command = line.split(None, 2)
+        if int(ppid) != pid or "/.claude/shell-snapshots/" not in command:
+            continue
+        m = TASK_RE.search(command)
+        tasks.append(m.group(1).replace("'\\''", "'") if m else command)
+    return tasks
 
 
 def plain(line):
@@ -196,6 +215,7 @@ def snapshot_sessions():
                 "draft": read_draft(lines),
                 "draft_caveat": draft_caveat(lines, w),
                 "at_prompt": prompt_body(lines) is not None,
+                "background_tasks": background_tasks(pid),
                 "busy": is_busy(lines),
                 "title": tmux("display", "-p", "-t", pane_id, "#{pane_title}").strip(),
                 "size": [w, h],
@@ -239,6 +259,8 @@ def describe(e):
         bits.append(f"worktree={e['worktree']}")
     if e.get("draft"):
         bits.append(f"draft={e['draft']!r}")
+    for t in e.get("background_tasks") or []:
+        bits.append(f"task={t[:60]!r}")
     return "  " + " | ".join(bits)
 
 
@@ -258,6 +280,12 @@ def cmd_save(args, phase="saved"):
             warn(f"{e['name']}: no idle ❯ prompt (dialog or bash/memory mode open?); its draft isn't saved")
         if e["draft_caveat"]:
             warn(f"{e['name']}: draft {e['draft_caveat']}")
+    tasked = [e for e in entries if e["background_tasks"]]
+    if tasked and phase == "down-started" and not args.force:
+        for e in tasked:
+            for t in e["background_tasks"]:
+                warn(f"{e['name']} has a background task that /exit will kill: {t[:100]}")
+        die("stop these (or pass --force to let them die; the resumed agent is told which ones ended)")
 
     prev = load_snapshot()
     carried = []
@@ -283,6 +311,21 @@ def wait_until(pred, timeout, interval=0.5):
             return True
         time.sleep(interval)
     return False
+
+
+def parallel(fn, entries):
+    """fn(e) per session on its own thread; an exception becomes that session's error string."""
+
+    def guarded(e):
+        try:
+            return fn(e)
+        except (RuntimeError, OSError) as ex:
+            return f"{e['name']}: {ex}"
+
+    if not entries:
+        return []
+    with ThreadPoolExecutor(max_workers=len(entries)) as pool:
+        return list(pool.map(guarded, entries))
 
 
 def pid_alive(pid):
@@ -312,15 +355,41 @@ def exit_session(e):
         tmux("send-keys", "-t", pane, "C-c")
         return f"input in {e['name']} did not read back as /exit; aborted"
     tmux("send-keys", "-t", pane, "Enter")
-    if not wait_until(lambda: not pid_alive(e["pid"]), 20):
+    # Never signal claude: a killed exit falls through to the worktree remove hook.
+    deadline = time.time() + EXIT_TIMEOUT
+    answered = False
+    while time.time() < deadline:
+        if not pid_alive(e["pid"]):
+            tmux("kill-session", "-t", e["name"], check=False)
+            return None
         try:
-            os.kill(e["pid"], 15)
-        except ProcessLookupError:
-            pass
-        if not wait_until(lambda: not pid_alive(e["pid"]), 10):
-            return f"{e['name']} (pid {e['pid']}) did not exit"
-    tmux("kill-session", "-t", e["name"], check=False)
-    return None
+            lines = [plain(l).strip() for l in capture(pane)]
+        except RuntimeError:
+            continue
+        if not answered and any(KEEP_RE.match(l) for l in lines):
+            err = choose_keep(pane)
+            if err:
+                return f"{e['name']}: {err}; answer the worktree dialog by hand (Keep)"
+            answered = True
+            print(f"  {e['name']}: kept worktree {e.get('worktree')}")
+        time.sleep(0.5)
+    return f"{e['name']} (pid {e['pid']}) did not exit within {EXIT_TIMEOUT}s; left running"
+
+
+def choose_keep(pane):
+    """Move the worktree-exit dialog's highlight onto a Keep option, verify, then confirm."""
+    for _ in range(6):
+        options = [l for l in (plain(x).strip() for x in capture(pane)) if OPTION_RE.match(l)]
+        current = next((i for i, l in enumerate(options) if l.startswith("❯")), None)
+        target = next((i for i, l in enumerate(options) if KEEP_RE.match(l)), None)
+        if current is None or target is None:
+            return "could not read the worktree dialog"
+        if current == target:
+            tmux("send-keys", "-t", pane, "Enter")
+            return None
+        tmux("send-keys", "-t", pane, "Down" if target > current else "Up")
+        time.sleep(0.3)
+    return "could not highlight Keep in the worktree dialog"
 
 
 def cmd_down(args):
@@ -331,16 +400,10 @@ def cmd_down(args):
         if input(f"\nExit {len(entries)} running sessions? [y/N] ").strip().lower() != "y":
             set_phase("saved")
             die("aborted; snapshot kept")
-    failures = []
-    for e in entries:
-        print(f"exiting {e['name']} …")
-        try:
-            err = exit_session(e)
-        except (RuntimeError, OSError) as ex:
-            err = f"{e['name']}: {ex}"
-        if err:
-            warn(err)
-            failures.append(err)
+    print(f"exiting {len(entries)} sessions in parallel …")
+    failures = [err for err in parallel(exit_session, entries) if err]
+    for err in failures:
+        warn(err)
     if failures:
         die(f"{len(failures)} session(s) still need attention; fix them, then rerun `down` (the snapshot keeps the rest)")
     set_phase("down-complete")
@@ -387,12 +450,20 @@ def paste(pane, text):
     tmux("paste-buffer", "-p", "-d", "-b", PASTE_BUF, "-t", pane)
 
 
-def worktree_prompt(path):
-    return (
-        "[claude-sessions] The machine restarted and this session was resumed from its launch directory. "
-        f"Re-enter your worktree now with EnterWorktree(path: \"{path}\") (cd there if EnterWorktree rejects it). "
-        "Do nothing else; reply with one line confirming the cwd."
-    )
+def resume_notice(worktree, tasks):
+    parts = ["[claude-sessions] The machine restarted and this session was resumed."]
+    if worktree:
+        parts.append(
+            f"Re-enter your worktree now with EnterWorktree(path: \"{worktree}\") (cd there if EnterWorktree rejects it)."
+        )
+    if tasks:
+        listed = "; ".join(f"`{t}`" for t in tasks)
+        parts.append(
+            f"These background tasks were killed by the restart and will never notify you: {listed}. "
+            "Don't restart them unless I ask; just note which ones you were waiting on."
+        )
+    parts.append("Do nothing else; reply in one or two lines.")
+    return " ".join(parts)
 
 
 def open_tab(command):
@@ -413,21 +484,27 @@ end tell
 
 
 def restore_session(e):
-    """Re-enter the worktree, then retype the draft. Returns a warning or None."""
+    """Wait for the prompt, send the resume notice (worktree, killed tasks), retype the draft."""
     pane = e["pane"]
-    if e.get("worktree") and proc_cwd(e["pid"]) != e["worktree"]:
+    if not wait_until(lambda: ready(pane), 90):
+        return "never reached an idle ❯ prompt; skipped its worktree/draft"
+    # The SessionStart hook renames the session if --resume ever lands on a new id.
+    e["name"] = tmux("display", "-p", "-t", pane, "#S").strip()
+    worktree = e.get("worktree") if e.get("worktree") and proc_cwd(e["pid"]) != e["worktree"] else None
+    tasks = e.get("background_tasks") or []
+    if worktree or tasks:
         if not input_empty(pane):
-            return "prompt isn't an empty ❯ input; skipped worktree re-entry and draft"
-        print(f"re-entering worktree for {e['name']}: {e['worktree']}")
-        paste(pane, worktree_prompt(e["worktree"]))
+            return "prompt isn't an empty ❯ input; skipped the resume notice and draft"
+        print(f"  {e['name']}: sending resume notice" + (f" (worktree {worktree})" if worktree else ""))
+        paste(pane, resume_notice(worktree, tasks))
         time.sleep(0.5)
         tmux("send-keys", "-t", pane, "Enter")
         if not wait_until(lambda: is_busy(capture(pane)), 15):
-            return "worktree prompt was not submitted; skipped its draft"
+            return "resume notice was not submitted; skipped its draft"
         if not wait_until(lambda: ready(pane), 180):
-            return "worktree turn still running; skipped its draft"
-        if proc_cwd(e["pid"]) != e["worktree"]:
-            warn(f"{e['name']}: cwd is {proc_cwd(e['pid'])}, expected {e['worktree']}")
+            return "resume-notice turn still running; skipped its draft"
+        if worktree and proc_cwd(e["pid"]) != worktree:
+            warn(f"{e['name']}: cwd is {proc_cwd(e['pid'])}, expected {worktree}")
     if e.get("draft"):
         if not input_empty(pane):
             return "input isn't empty; skipped its draft"
@@ -463,16 +540,7 @@ def cmd_restore(args):
             started.append(e)
         except RuntimeError as ex:
             warn(f"{e['name']}: {ex}")
-    for e in started:
-        if not wait_until(lambda: ready(e["pane"]), 90):
-            warn(f"{e['name']} never reached an idle ❯ prompt; skipped its worktree/draft")
-            continue
-        # The SessionStart hook renames the session if --resume ever lands on a new id.
-        e["name"] = tmux("display", "-p", "-t", e["pane"], "#S").strip()
-        try:
-            msg = restore_session(e)
-        except (RuntimeError, OSError) as ex:
-            msg = str(ex)
+    for e, msg in zip(started, parallel(restore_session, started)):
         if msg:
             warn(f"{e['name']}: {msg}")
     if started:

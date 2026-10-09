@@ -662,9 +662,10 @@ def cmd_restore(args):
 
 def cmd_attach(args):
     name = args.name
-    tmux("set", "-t", name, "destroy-unattached", "on")
     exit_file = tmux("show-environment", "-t", name, "CLAUDE_EXIT_FILE", check=False).strip().partition("=")[2]
-    subprocess.run(["tmux", "attach-session", "-t", name])
+    # destroy-unattached kills a session the instant it turns on while no client is attached,
+    # so it's set in the same command sequence, after the attach (as the shellrc wrapper does).
+    subprocess.run(["tmux", "attach-session", "-t", name, ";", "set", "destroy-unattached", "on"])
     if exit_file and os.path.exists(exit_file):
         m = re.search(r'"session_id":"([^"]*)"', Path(exit_file).read_text())
         if m:

@@ -37,14 +37,16 @@ DIM = "\x1b[2m"
 PROMPT_RE = re.compile(r"^❯(?!\s*\d+\.)")
 LOSSY_RE = re.compile(r"\[(Pasted text|Image) #\d+")
 TASK_RE = re.compile(r"eval '((?:[^']|'\\'')*)' < /dev/null")
-# Option labels of Claude's "exit while in a worktree" dialog; anything but keep runs the remove hook.
-KEEP_RE = re.compile(r"^(❯\s*)?\d+\.\s+Keep worktree(, end tmux session)?\s*$")
+# Claude's "exit while in a worktree" dialog; any Remove option runs the WorktreeRemove hook.
+WORKTREE_DIALOG = "Exiting worktree session"
+KEEP_RE = re.compile(r"^(❯\s*)?\d+\.\s+Keep worktree\b")
 OPTION_RE = re.compile(r"^(❯\s*)?\d+\.\s+\S")
+# Running subagent row in the panel under the input box, e.g. "❯ ⏺ code-reviewer  Verifying … 5m 53s · ↓ 113.4k tokens"
+AGENT_ROW_RE = re.compile(r"⏺ .*\d+[hms] · [↓↑]")
 EXIT_TIMEOUT = 30
 RULE_MIN = 20
-PASTE_BUF = "claude-sessions"
-# A down that stopped partway leaves exited sessions only in the snapshot; carry them forward.
-CARRY_PHASES = ("down-started", "down-complete")
+# Ghostty stable and Nightly share a bundle id; only Nightly has the AppleScript dictionary.
+GHOSTTY_APP = os.environ.get("CLAUDE_SESSIONS_GHOSTTY_APP", "/Applications/Ghostty Nightly.app")
 
 
 def die(msg):
@@ -103,8 +105,9 @@ def capture(target):
 
 
 def is_rule(line):
+    # A named session draws its title into the top rule: "──── Some title ─".
     s = plain(line).strip()
-    return len(s) >= RULE_MIN and s.count("─") >= len(s) * 0.9
+    return len(s) >= RULE_MIN and s.startswith("─" * RULE_MIN) and s.endswith("─")
 
 
 def input_box(lines):
@@ -139,9 +142,11 @@ def read_draft(lines):
 
 
 def is_busy(lines):
+    """A turn is running, or a subagent is (its row sits below the box and it dies with /exit)."""
     box = input_box(lines)
     above = lines[: box[0]] if box else lines
-    return any(BUSY_RE.search(plain(l)) for l in above[-15:])
+    below = lines[box[1] + 1 :] if box else []
+    return any(BUSY_RE.search(plain(l)) for l in above[-15:]) or any(AGENT_ROW_RE.search(plain(l)) for l in below)
 
 
 def draft_caveat(lines, width):
@@ -184,7 +189,7 @@ def leader_pane(session):
 GHOSTTY_TABS = """
 set sep to character id 9
 set out to ""
-tell application "Ghostty"
+tell application {app}
   set wi to 0
   repeat with w in windows
     set wi to wi + 1
@@ -208,7 +213,7 @@ def osascript(script):
 def ghostty_tabs():
     """tty -> {window, index, title}; title is set only when the tab was renamed. {} without Ghostty scripting."""
     try:
-        out = osascript(GHOSTTY_TABS)
+        out = osascript(GHOSTTY_TABS.replace("{app}", applescript_str(GHOSTTY_APP)))
     except RuntimeError as ex:
         warn(f"can't read Ghostty tabs ({ex}); tab layout and names won't be restored")
         return {}
@@ -338,19 +343,21 @@ def cmd_save(args, phase="saved"):
                 warn(f"{e['name']} has a background task that /exit will kill: {t[:100]}")
         die("stop these (or pass --force to let them die; the resumed agent is told which ones ended)")
 
+    # Until a restore consumes the snapshot, sessions that already exited live only there; keep them.
     prev = load_snapshot()
     carried = []
-    if prev and prev.get("phase") in CARRY_PHASES:
+    if prev and prev.get("phase") != "restored" and not args.fresh:
         live_ids = {e["session_id"] for e in entries}
         carried = [e for e in prev["sessions"] if e["session_id"] not in live_ids]
-    if not entries and not carried and prev and prev["sessions"] and not args.force:
-        die(f"no live sessions; refusing to overwrite the {len(prev['sessions'])}-session snapshot (--force to do it)")
+    if not entries and not carried and prev and prev["sessions"] and not args.fresh:
+        die(f"no live sessions; refusing to overwrite the {len(prev['sessions'])}-session snapshot (--fresh to do it)")
     for e in carried:
-        print(f"  carrying forward {e['name']} (exited by an earlier, unfinished down)")
-    write_snapshot(carried + entries, phase)
+        print(f"  carrying forward {e['name']} (not running; --fresh drops it)")
+    saved = sorted(carried + entries, key=tab_order)
+    write_snapshot(saved, phase)
 
-    print(f"Saved {len(carried) + len(entries)} sessions to {SNAPSHOT}")
-    for e in carried + entries:
+    print(f"Saved {len(saved)} sessions to {SNAPSHOT}")
+    for e in saved:
         print(describe(e))
     return entries
 
@@ -370,8 +377,8 @@ def parallel(fn, entries):
     def guarded(e):
         try:
             return fn(e)
-        except (RuntimeError, OSError) as ex:
-            return f"{e['name']}: {ex}"
+        except Exception as ex:  # one session's surprise must not abandon the others mid-exit
+            return f"{e['name']}: {type(ex).__name__}: {ex}"
 
     if not entries:
         return []
@@ -391,6 +398,8 @@ def exit_session(e):
     pane = e["pane"]
     for _ in range(3):
         lines = capture(pane)
+        if is_busy(lines):
+            return f"{e['name']}: a turn or subagent is running; let it finish, then rerun `down`"
         if prompt_body(lines) is None:
             return f"{e['name']}: no idle ❯ prompt (dialog or bash/memory mode open?); exit it by hand"
         if read_draft(lines) is None:
@@ -408,48 +417,70 @@ def exit_session(e):
     tmux("send-keys", "-t", pane, "Enter")
     # Never signal claude: a killed exit falls through to the worktree remove hook.
     deadline = time.time() + EXIT_TIMEOUT
-    answered = False
+    answered_at = None
     while time.time() < deadline:
         if not pid_alive(e["pid"]):
             tmux("kill-session", "-t", e["name"], check=False)
             return None
         try:
-            lines = [plain(l).strip() for l in capture(pane)]
+            options = worktree_dialog(pane)
         except RuntimeError:
+            time.sleep(0.5)
             continue
-        if not answered and any(KEEP_RE.match(l) for l in lines):
-            err = choose_keep(pane)
+        # Re-answer only if the dialog is still up well after the last Enter.
+        if options and (answered_at is None or time.time() - answered_at > 3):
+            err = choose_keep(pane, options)
             if err:
-                return f"{e['name']}: {err}; answer the worktree dialog by hand (Keep)"
-            answered = True
+                tmux("send-keys", "-t", pane, "Escape")
+                return f"{e['name']}: {err}; answer its worktree dialog with Keep by hand — DON'T reboot first"
+            answered_at = time.time()
             print(f"  {e['name']}: kept worktree {e.get('worktree')}")
         time.sleep(0.5)
-    return f"{e['name']} (pid {e['pid']}) did not exit within {EXIT_TIMEOUT}s; left running"
+    return f"{e['name']} (pid {e['pid']}) did not exit within {EXIT_TIMEOUT}s; left running — DON'T reboot until it's closed"
 
 
-def choose_keep(pane):
-    """Move the worktree-exit dialog's highlight onto a Keep option, verify, then confirm."""
-    for _ in range(6):
-        options = [l for l in (plain(x).strip() for x in capture(pane)) if OPTION_RE.match(l)]
-        current = next((i for i, l in enumerate(options) if l.startswith("❯")), None)
-        target = next((i for i, l in enumerate(options) if KEEP_RE.match(l)), None)
-        if current is None or target is None:
-            return "could not read the worktree dialog"
-        if current == target:
-            tmux("send-keys", "-t", pane, "Enter")
-            return None
-        tmux("send-keys", "-t", pane, "Down" if target > current else "Up")
-        time.sleep(0.3)
-    return "could not highlight Keep in the worktree dialog"
+def worktree_dialog(pane):
+    """Option lines of the worktree-exit dialog from a stable screen, or None if it isn't showing."""
+    first = capture(pane)
+    time.sleep(0.4)
+    raw = capture(pane)
+    if raw != first:
+        return None
+    lines = [plain(l).strip() for l in raw]
+    head = max((i for i, l in enumerate(lines) if WORKTREE_DIALOG in l), default=None)
+    # The dialog replaces the prompt; a ❯ input box below the header means it's only transcript text.
+    if head is None or prompt_body(raw[head:]) is not None:
+        return None
+    return [l for l in lines[head + 1 :] if OPTION_RE.match(l)] or None
+
+
+def choose_keep(pane, options):
+    """Move the dialog's highlight onto a Keep option, confirm it from a stable screen, then press Enter."""
+    current = next((i for i, l in enumerate(options) if l.startswith("❯")), None)
+    target = next((i for i, l in enumerate(options) if KEEP_RE.match(l)), None)
+    if current is None or target is None:
+        return "could not read the worktree dialog"
+    if current != target:
+        # Moves are computed once; re-deciding from a lagging screen could overshoot onto Remove.
+        tmux("send-keys", "-t", pane, *(["Down" if target > current else "Up"] * abs(target - current)))
+        for _ in range(10):
+            options = worktree_dialog(pane)
+            if options and any(l.startswith("❯") and KEEP_RE.match(l) for l in options):
+                break
+        else:
+            return "could not confirm Keep is highlighted"
+    tmux("send-keys", "-t", pane, "Enter")
+    return None
 
 
 def cmd_down(args):
     if os.environ.get("TMUX"):
         die("run `down` from a plain Ghostty tab, not inside tmux")
+    prev_phase = (load_snapshot() or {}).get("phase", "saved")
     entries = cmd_save(args, phase="down-started")
     if not args.yes:
         if input(f"\nExit {len(entries)} running sessions? [y/N] ").strip().lower() != "y":
-            set_phase("saved")
+            set_phase(prev_phase)
             die("aborted; snapshot kept")
     print(f"exiting {len(entries)} sessions in parallel …")
     failures = [err for err in parallel(exit_session, entries) if err]
@@ -497,8 +528,10 @@ def launch(e):
 
 def paste(pane, text):
     """Bracketed paste via a buffer: no tmux argv parsing of leading '-' or trailing ';'."""
-    tmux("load-buffer", "-b", PASTE_BUF, "-", input=text)
-    tmux("paste-buffer", "-p", "-d", "-b", PASTE_BUF, "-t", pane)
+    # Per-pane buffer: restores run in parallel threads and a shared one gets swapped between load and paste.
+    buf = f"claude-sessions-{pane.lstrip('%')}"
+    tmux("load-buffer", "-b", buf, "-", input=text)
+    tmux("paste-buffer", "-p", "-d", "-b", buf, "-t", pane)
 
 
 def resume_notice(worktree, tasks):
@@ -524,11 +557,13 @@ def applescript_str(s):
 def open_tabs(entries):
     """Recreate the saved Ghostty windows/tabs in order, each attaching its session, with renamed titles reapplied."""
     self_path = os.path.realpath(sys.argv[0])
-    lines = ['tell application "Ghostty"', "  activate"]
+    lines = [f"tell application {applescript_str(GHOSTTY_APP)}", "  activate"]
     window = None
     for i, e in enumerate(sorted(entries, key=tab_order)):
         tab = e.get("tab") or {}
-        cmd = applescript_str(f"{self_path} attach {e['name']}")
+        # Read the name live: the SessionStart hook may rename the session after restore_session gave up on it.
+        name = tmux("display", "-p", "-t", e["pane"], "#S", check=False).strip() or e["name"]
+        cmd = applescript_str(f"{self_path} attach {name}")
         lines += ["  set cfg to new surface configuration", f"  set initial input of cfg to {cmd} & linefeed"]
         if i == 0 or tab.get("window") != window:
             window = tab.get("window")
@@ -556,8 +591,12 @@ def restore_session(e):
         print(f"  {e['name']}: sending resume notice" + (f" (worktree {worktree})" if worktree else ""))
         paste(pane, resume_notice(worktree, tasks))
         time.sleep(0.5)
+        typed = read_draft(capture(pane)) or ""
+        if not typed.startswith(("[claude-sessions]", "[Pasted text")):
+            return f"resume notice didn't land in the input (read back {typed[:40]!r}); skipped it and the draft"
         tmux("send-keys", "-t", pane, "Enter")
-        if not wait_until(lambda: is_busy(capture(pane)), 15):
+        # A fast turn can start and finish between polls; an emptied input also means it was submitted.
+        if not wait_until(lambda: is_busy(capture(pane)) or input_empty(pane), 15):
             return "resume notice was not submitted; skipped its draft"
         if not wait_until(lambda: ready(pane), 180):
             return "resume-notice turn still running; skipped its draft"
@@ -648,6 +687,7 @@ def main():
     for name in ("save", "down"):
         s = sub.add_parser(name)
         s.add_argument("--force", action="store_true", help="snapshot even with busy or unresolvable sessions")
+        s.add_argument("--fresh", action="store_true", help="drop snapshotted sessions that are no longer running")
         if name == "down":
             s.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     r = sub.add_parser("restore")

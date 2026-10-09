@@ -20,14 +20,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import termios
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".local/state/claude-sessions"
 SNAPSHOT = STATE_DIR / "snapshot.json"
-RELEASE = STATE_DIR / "tabs-release"
 EXIT_DIR = Path.home() / ".local/state/claude-wrapper"
 PROJECTS = Path.home() / ".claude/projects"
 SESSION_RE = re.compile(r"^claude-[0-9a-f]{8}$")
@@ -183,14 +181,60 @@ def leader_pane(session):
     return None
 
 
-def client_order(session):
-    out = tmux("list-clients", "-t", session, "-F", "#{client_created}", check=False)
-    stamps = [int(x) for x in out.split()]
-    return min(stamps) if stamps else 1 << 62
+GHOSTTY_TABS = """
+set sep to character id 9
+set out to ""
+tell application "Ghostty"
+  set wi to 0
+  repeat with w in windows
+    set wi to wi + 1
+    repeat with t in tabs of w
+      set ft to focused terminal of t
+      set out to out & wi & sep & (index of t) & sep & (tty of ft) & sep & (name of ft) & sep & (name of t) & linefeed
+    end repeat
+  end repeat
+end tell
+return out
+"""
+
+
+def osascript(script):
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip())
+    return r.stdout
+
+
+def ghostty_tabs():
+    """tty -> {window, index, title}; title is set only when the tab was renamed. {} without Ghostty scripting."""
+    try:
+        out = osascript(GHOSTTY_TABS)
+    except RuntimeError as ex:
+        warn(f"can't read Ghostty tabs ({ex}); tab layout and names won't be restored")
+        return {}
+    tabs = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5:
+            continue
+        window, index, tty, term_title, tab_title = parts
+        tabs[tty] = {
+            "window": int(window),
+            "index": int(index),
+            # A renamed tab's title overrides the terminal's; otherwise they match.
+            "title": tab_title if tab_title != term_title else None,
+        }
+    return tabs
+
+
+def tab_for(session, tabs):
+    ttys = tmux("list-clients", "-t", session, "-F", "#{client_tty}", check=False).split()
+    return next((tabs[t] for t in ttys if t in tabs), None)
 
 
 def snapshot_sessions():
     names = [n for n in tmux("list-sessions", "-F", "#S", check=False).split() if SESSION_RE.match(n)]
+    tabs = ghostty_tabs() if names else {}
     entries, problems = [], []
     for name in names:
         sid8 = name[len("claude-") :]
@@ -219,13 +263,18 @@ def snapshot_sessions():
                 "busy": is_busy(lines),
                 "title": tmux("display", "-p", "-t", pane_id, "#{pane_title}").strip(),
                 "size": [w, h],
-                "order": client_order(name),
+                "tab": tab_for(name, tabs),
                 "pane": pane_id,
                 "pid": pid,
             }
         )
-    entries.sort(key=lambda e: e["order"])
+    entries.sort(key=tab_order)
     return entries, problems
+
+
+def tab_order(e):
+    tab = e.get("tab")
+    return (tab["window"], tab["index"]) if tab else (1 << 30, 0)
 
 
 def load_snapshot():
@@ -255,6 +304,8 @@ def set_phase(phase):
 
 def describe(e):
     bits = [e["name"], e["title"]]
+    if (e.get("tab") or {}).get("title"):
+        bits.append(f"tab={e['tab']['title']!r}")
     if e.get("worktree"):
         bits.append(f"worktree={e['worktree']}")
     if e.get("draft"):
@@ -466,21 +517,28 @@ def resume_notice(worktree, tasks):
     return " ".join(parts)
 
 
-def open_tab(command):
-    script = f'''
-tell application "Ghostty" to activate
-delay 0.3
-tell application "System Events"
-  if name of first application process whose frontmost is true is not "ghostty" then error "Ghostty is not frontmost"
-  keystroke "t" using command down
-  delay 0.8
-  keystroke "{command}"
-  key code 36
-end tell
-'''
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr.strip())
+def applescript_str(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def open_tabs(entries):
+    """Recreate the saved Ghostty windows/tabs in order, each attaching its session, with renamed titles reapplied."""
+    self_path = os.path.realpath(sys.argv[0])
+    lines = ['tell application "Ghostty"', "  activate"]
+    window = None
+    for i, e in enumerate(sorted(entries, key=tab_order)):
+        tab = e.get("tab") or {}
+        cmd = applescript_str(f"{self_path} attach {e['name']}")
+        lines += ["  set cfg to new surface configuration", f"  set initial input of cfg to {cmd} & linefeed"]
+        if i == 0 or tab.get("window") != window:
+            window = tab.get("window")
+            lines += ["  set w to new window with configuration cfg", "  set t to tab 1 of w"]
+        else:
+            lines += ["  set t to new tab in w with configuration cfg"]
+        if tab.get("title"):
+            lines.append(f"  perform action {applescript_str('set_tab_title:' + tab['title'])} on focused terminal of t")
+    lines.append("end tell")
+    osascript("\n".join(lines))
 
 
 def restore_session(e):
@@ -552,24 +610,19 @@ def cmd_restore(args):
             print(f"  {e['name']}  {e['title']}")
         return
 
-    # Tabs block until every tab is open, so a stray keystroke lands in a waiting shell, never in Claude.
-    RELEASE.unlink(missing_ok=True)
-    self_path = os.path.realpath(sys.argv[0])
-    for e in started[1:]:
-        try:
-            open_tab(f"{self_path} attach --wait {e['name']}")
-        except RuntimeError as err:
-            warn(f"could not open a Ghostty tab for {e['name']} ({err}); attach it with: claude-sessions attach {e['name']}")
-    RELEASE.touch()
-    cmd_attach(argparse.Namespace(name=started[0]["name"], wait=False))
+    try:
+        open_tabs(started)
+    except RuntimeError as ex:
+        warn(f"could not open Ghostty tabs ({ex})")
+        print("Attach each with: claude-sessions attach <name>")
+        for e in started:
+            print(f"  {e['name']}  {e['title']}")
+        return
+    print(f"\nOpened {len(started)} tabs; this tab can be closed.")
 
 
 def cmd_attach(args):
     name = args.name
-    if args.wait and not wait_until(RELEASE.exists, 900):
-        die("timed out waiting for restore to finish opening tabs")
-    if sys.stdin.isatty():
-        termios.tcflush(sys.stdin, termios.TCIFLUSH)
     tmux("set", "-t", name, "destroy-unattached", "on")
     exit_file = tmux("show-environment", "-t", name, "CLAUDE_EXIT_FILE", check=False).strip().partition("=")[2]
     subprocess.run(["tmux", "attach-session", "-t", name])
@@ -600,7 +653,6 @@ def main():
     r = sub.add_parser("restore")
     r.add_argument("--no-tabs", action="store_true", help="resume sessions but don't open Ghostty tabs")
     a = sub.add_parser("attach")
-    a.add_argument("--wait", action="store_true", help="block until restore has opened every tab")
     a.add_argument("name")
     sub.add_parser("status")
     args = p.parse_args()

@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""Snapshot, shut down, and restore every wrapped Claude Code session.
+
+  claude-sessions save      snapshot sessions (no shutdown)
+  claude-sessions down      snapshot, then /exit every session
+  claude-sessions restore   resume every snapshotted session, re-enter
+                            worktrees, refill drafts, reopen Ghostty tabs
+  claude-sessions attach X  attach a restored session (what each tab runs)
+  claude-sessions status    print the snapshot
+
+Sessions are the tmux sessions named claude-<sid8> by the shellrc claude()
+wrapper. Run `down` and `restore` from a plain Ghostty tab, not inside tmux.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+STATE_DIR = Path.home() / ".local/state/claude-sessions"
+SNAPSHOT = STATE_DIR / "snapshot.json"
+EXIT_DIR = Path.home() / ".local/state/claude-wrapper"
+PROJECTS = Path.home() / ".claude/projects"
+SESSION_RE = re.compile(r"^claude-[0-9a-f]{8}$")
+# Spinner line while a turn is running, e.g. "✽ Coalescing… (2m 33s · ↓ 13.8k tokens"
+BUSY_RE = re.compile(r"…\s*\((\d+[hms]\s*)+")
+RULE_MIN = 20
+
+
+def die(msg):
+    print(f"claude-sessions: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def warn(msg):
+    print(f"  ! {msg}", file=sys.stderr)
+
+
+def tmux(*args, check=True):
+    r = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError(f"tmux {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def proc_comm(pid):
+    r = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def is_claude_pid(pid):
+    return "claude" in proc_comm(pid)
+
+
+def proc_cwd(pid):
+    r = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.startswith("n"):
+            return line[1:]
+    return None
+
+
+def capture(target):
+    return tmux("capture-pane", "-p", "-J", "-t", target).splitlines()
+
+
+def is_rule(line):
+    s = line.strip()
+    return len(s) >= RULE_MIN and s.count("─") >= len(s) * 0.9
+
+
+def input_box(lines):
+    """Index bounds (top_rule, bottom_rule) of the prompt input box, or None."""
+    rules = [i for i, l in enumerate(lines) if is_rule(l)]
+    if len(rules) < 2:
+        return None
+    return rules[-2], rules[-1]
+
+
+def read_draft(lines):
+    box = input_box(lines)
+    if box is None:
+        return None
+    body = lines[box[0] + 1 : box[1]]
+    if not body or not body[0].startswith("❯"):
+        return None
+    out = [body[0][1:].strip()]
+    for l in body[1:]:
+        out.append(l[2:].rstrip() if l.startswith("  ") else l.rstrip())
+    text = "\n".join(out).strip()
+    return text or None
+
+
+def is_busy(lines):
+    box = input_box(lines)
+    above = lines[: box[0]] if box else lines
+    return any(BUSY_RE.search(l) for l in above[-15:])
+
+
+def transcript_for(sid8):
+    hits = sorted(PROJECTS.glob(f"*/{sid8}*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return hits[0] if hits else None
+
+
+def transcript_cwd(path):
+    """First recorded cwd: the directory `claude --resume` must run from."""
+    with open(path) as f:
+        for line in f:
+            m = re.search(r'"cwd":"([^"]*)"', line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def leader_pane(session):
+    panes = tmux("list-panes", "-s", "-t", session, "-F", "#{pane_id} #{pane_pid} #{pane_width} #{pane_height}")
+    leader = tmux("show", "-t", session, "-v", "@claude-leader-pid", check=False).strip()
+    rows = [p.split() for p in panes.splitlines()]
+    for pid_match in ([leader] if leader else []) + [None]:
+        for pane_id, pid, w, h in rows:
+            if (pid_match is None or pid == pid_match) and is_claude_pid(pid):
+                return pane_id, int(pid), int(w), int(h)
+    return None
+
+
+def client_order(session):
+    out = tmux("list-clients", "-t", session, "-F", "#{client_created}", check=False)
+    stamps = [int(x) for x in out.split()]
+    return min(stamps) if stamps else 1 << 62
+
+
+def snapshot_sessions():
+    names = [n for n in tmux("list-sessions", "-F", "#S", check=False).split() if SESSION_RE.match(n)]
+    entries, problems = [], []
+    for name in names:
+        sid8 = name[len("claude-") :]
+        pane = leader_pane(name)
+        if pane is None:
+            problems.append(f"{name}: no live claude pane")
+            continue
+        pane_id, pid, w, h = pane
+        transcript = transcript_for(sid8)
+        if transcript is None:
+            problems.append(f"{name}: no transcript matching {sid8}* under {PROJECTS}")
+            continue
+        launch_cwd = transcript_cwd(transcript)
+        live_cwd = proc_cwd(pid)
+        lines = capture(pane_id)
+        entries.append(
+            {
+                "name": name,
+                "session_id": transcript.stem,
+                "launch_cwd": launch_cwd,
+                "worktree": live_cwd if live_cwd and live_cwd != launch_cwd else None,
+                "draft": read_draft(lines),
+                "busy": is_busy(lines),
+                "title": tmux("display", "-p", "-t", pane_id, "#{pane_title}").strip(),
+                "size": [w, h],
+                "order": client_order(name),
+                "pane": pane_id,
+                "pid": pid,
+            }
+        )
+    entries.sort(key=lambda e: e["order"])
+    return entries, problems
+
+
+def write_snapshot(entries):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    keep = [{k: v for k, v in e.items() if k not in ("pane", "pid", "busy")} for e in entries]
+    tmp = SNAPSHOT.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"saved_at": time.time(), "sessions": keep}, indent=2))
+    tmp.replace(SNAPSHOT)
+
+
+def describe(e):
+    bits = [e["name"], e["title"]]
+    if e.get("worktree"):
+        bits.append(f"worktree={e['worktree']}")
+    if e.get("draft"):
+        bits.append(f"draft={e['draft']!r}")
+    return "  " + " | ".join(bits)
+
+
+def cmd_save(args, quiet=False):
+    entries, problems = snapshot_sessions()
+    for p in problems:
+        warn(p)
+    if problems and not args.force:
+        die("refusing to snapshot with unresolved sessions (--force to skip them)")
+    busy = [e for e in entries if e["busy"]]
+    if busy and not args.force:
+        for e in busy:
+            warn(f"{e['name']} is mid-turn ({e['title']})")
+        die("wait for these turns to finish, or pass --force")
+    write_snapshot(entries)
+    if not quiet:
+        print(f"Saved {len(entries)} sessions to {SNAPSHOT}")
+        for e in entries:
+            print(describe(e))
+    return entries
+
+
+def wait_until(pred, timeout, interval=0.5):
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(interval)
+    return False
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def exit_session(e):
+    pane = e["pane"]
+    # Ctrl-C clears a non-empty draft; never type /exit on top of leftover text.
+    for _ in range(3):
+        if read_draft(capture(pane)) is None:
+            break
+        tmux("send-keys", "-t", pane, "C-c")
+        time.sleep(0.4)
+    if read_draft(capture(pane)) is not None:
+        return f"could not clear the draft in {e['name']}"
+    tmux("send-keys", "-t", pane, "-l", "/exit")
+    time.sleep(0.4)
+    if read_draft(capture(pane)) != "/exit":
+        tmux("send-keys", "-t", pane, "C-c")
+        return f"input in {e['name']} did not read back as /exit; aborted"
+    tmux("send-keys", "-t", pane, "Enter")
+    if not wait_until(lambda: not pid_alive(e["pid"]), 20):
+        os.kill(e["pid"], 15)
+        if not wait_until(lambda: not pid_alive(e["pid"]), 10):
+            return f"{e['name']} (pid {e['pid']}) did not exit"
+    tmux("kill-session", "-t", e["name"], check=False)
+    return None
+
+
+def cmd_down(args):
+    if os.environ.get("TMUX"):
+        die("run `down` from a plain Ghostty tab, not inside tmux")
+    entries = cmd_save(args)
+    if not args.yes:
+        if input(f"\nExit all {len(entries)} sessions? [y/N] ").strip().lower() != "y":
+            die("aborted; snapshot kept")
+    failures = []
+    for e in entries:
+        print(f"exiting {e['name']} …")
+        err = exit_session(e)
+        if err:
+            warn(err)
+            failures.append(err)
+    if failures:
+        die(f"{len(failures)} session(s) still need attention before restarting")
+    print("\nAll sessions exited. Restart, open Ghostty, then run: claude-sessions restore")
+
+
+def ready(pane):
+    try:
+        lines = capture(pane)
+    except RuntimeError:
+        return False
+    return input_box(lines) is not None and not is_busy(lines)
+
+
+def launch(e):
+    claude_bin = shutil.which("claude")
+    if claude_bin is None:
+        raise RuntimeError("claude not on PATH")
+    EXIT_DIR.mkdir(parents=True, exist_ok=True)
+    fd, exit_file = tempfile.mkstemp(prefix="claude-exit.", dir=EXIT_DIR)
+    os.close(fd)
+    w, h = e["size"]
+    # Mirrors the shellrc claude() wrapper; destroy-unattached is set on first attach instead.
+    tmux(
+        "new-session", "-d", "-s", e["name"], "-x", str(w), "-y", str(h), "-c", e["launch_cwd"],
+        "-e", "CLAUDE_CODE_TMUX_TRUECOLOR=1", "-e", f"CLAUDE_EXIT_FILE={exit_file}", "-e", "COLORTERM=truecolor",
+        f"{claude_bin} --resume {e['session_id']}",
+    )
+    tmux("set", "-t", e["name"], "status-style", "bg=colour238 fg=colour250")
+    tmux("set", "-t", e["name"], "@claude-running", "1")
+    tmux("set", "-t", e["name"], "-F", "@claude-leader-pid", "#{pane_pid}")
+    pane, pid = tmux("display", "-p", "-t", e["name"], "#{pane_id} #{pane_pid}").split()
+    e["pane"], e["pid"] = pane, int(pid)
+
+
+def type_text(pane, text):
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            tmux("send-keys", "-t", pane, "C-j")
+        if line:
+            tmux("send-keys", "-t", pane, "-l", line)
+
+
+def worktree_prompt(path):
+    return (
+        "[claude-sessions] The machine restarted and this session was resumed from its launch directory. "
+        f"Re-enter your worktree now with EnterWorktree(path: \"{path}\") (cd there if EnterWorktree rejects it). "
+        "Do nothing else; reply with one line confirming the cwd."
+    )
+
+
+def open_tab(command):
+    script = f'''
+tell application "Ghostty" to activate
+delay 0.3
+tell application "System Events"
+  keystroke "t" using command down
+  delay 0.8
+  keystroke "{command}"
+  key code 36
+end tell
+'''
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip())
+
+
+def cmd_restore(args):
+    if os.environ.get("TMUX"):
+        die("run `restore` from a plain Ghostty tab, not inside tmux")
+    if not SNAPSHOT.exists():
+        die(f"no snapshot at {SNAPSHOT}")
+    entries = json.loads(SNAPSHOT.read_text())["sessions"]
+    live = set(tmux("list-sessions", "-F", "#S", check=False).split())
+
+    todo = []
+    for e in entries:
+        if e["name"] in live:
+            warn(f"{e['name']} is already running; skipping")
+        elif not e["launch_cwd"] or not Path(e["launch_cwd"]).is_dir():
+            warn(f"{e['name']}: launch dir {e['launch_cwd']} is missing; skipping")
+        else:
+            if e.get("worktree") and not Path(e["worktree"]).is_dir():
+                warn(f"{e['name']}: worktree {e['worktree']} is gone; resuming without it")
+                e["worktree"] = None
+            todo.append(e)
+
+    for e in todo:
+        print(f"resuming {e['name']} in {e['launch_cwd']}")
+        launch(e)
+    for e in todo:
+        if not wait_until(lambda: ready(e["pane"]), 90):
+            warn(f"{e['name']} never reached an idle prompt; skipping its worktree/draft")
+            e["skip"] = True
+
+    movers = [e for e in todo if e.get("worktree") and not e.get("skip") and proc_cwd(e["pid"]) != e["worktree"]]
+    for e in movers:
+        print(f"re-entering worktree for {e['name']}: {e['worktree']}")
+        type_text(e["pane"], worktree_prompt(e["worktree"]))
+        time.sleep(0.3)
+        tmux("send-keys", "-t", e["pane"], "Enter")
+    for e in movers:
+        wait_until(lambda: is_busy(capture(e["pane"])), 15)
+        if not wait_until(lambda: ready(e["pane"]), 180):
+            warn(f"{e['name']}: worktree turn still running; skipping its draft")
+            e["skip"] = True
+        elif proc_cwd(e["pid"]) != e["worktree"]:
+            warn(f"{e['name']}: cwd is {proc_cwd(e['pid'])}, expected {e['worktree']}")
+
+    for e in todo:
+        if e.get("draft") and not e.get("skip"):
+            type_text(e["pane"], e["draft"])
+
+    if args.no_tabs or not todo:
+        print("\nAttach with: claude-sessions attach <name>")
+        for e in todo:
+            print(f"  {e['name']}  {e['title']}")
+        return
+
+    self_path = os.path.realpath(sys.argv[0])
+    for e in todo[1:]:
+        try:
+            open_tab(f"{self_path} attach {e['name']}")
+        except RuntimeError as err:
+            warn(f"could not open a Ghostty tab for {e['name']} ({err}); attach it manually")
+    cmd_attach(argparse.Namespace(name=todo[0]["name"]))
+
+
+def cmd_attach(args):
+    name = args.name
+    tmux("set", "-t", name, "destroy-unattached", "on")
+    exit_file = tmux("show-environment", "-t", name, "CLAUDE_EXIT_FILE", check=False).strip().partition("=")[2]
+    subprocess.run(["tmux", "attach-session", "-t", name])
+    if exit_file and os.path.exists(exit_file):
+        m = re.search(r'"session_id":"([^"]*)"', Path(exit_file).read_text())
+        if m:
+            print(f"\n\033[90mResume this session with:\n  claude --resume {m.group(1)}\n\033[0m")
+        os.remove(exit_file)
+
+
+def cmd_status(_args):
+    if not SNAPSHOT.exists():
+        die(f"no snapshot at {SNAPSHOT}")
+    data = json.loads(SNAPSHOT.read_text())
+    print(f"Snapshot from {time.ctime(data['saved_at'])}")
+    for e in data["sessions"]:
+        print(describe(e))
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("save", "down"):
+        s = sub.add_parser(name)
+        s.add_argument("--force", action="store_true", help="snapshot even with busy or unresolvable sessions")
+        if name == "down":
+            s.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
+    r = sub.add_parser("restore")
+    r.add_argument("--no-tabs", action="store_true", help="resume sessions but don't open Ghostty tabs")
+    a = sub.add_parser("attach")
+    a.add_argument("name")
+    sub.add_parser("status")
+    args = p.parse_args()
+    {"save": cmd_save, "down": cmd_down, "restore": cmd_restore, "attach": cmd_attach, "status": cmd_status}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()

@@ -491,6 +491,14 @@ unset _skill_dir
 # merge dance.
 link "$DOTFILES/claude-global/keybindings.json" "$HOME/.claude/keybindings.json"
 
+# Claude CLI helpers (e.g. claude-sessions for reboot save/restore) onto PATH.
+mkdir -p "$HOME/.local/bin"
+for _bin in "$DOTFILES/claude-global/bin"/*; do
+  [ -f "$_bin" ] || continue
+  link "$_bin" "$HOME/.local/bin/$(basename "$_bin")"
+done
+unset _bin
+
 if command -v jq &>/dev/null; then
   # --force: install.sh is unattended and needs to make forward progress.
   # Drift (if any) is logged to .state/claude-settings-drift.log before

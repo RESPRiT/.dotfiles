@@ -393,10 +393,18 @@ claude() {
   # /var/folders temp files untouched for 3 days, and the file is written
   # once at SessionStart — a wrapper session alive longer than that would
   # lose it and exit without the resume hint. The find sweep clears
-  # leftovers from crashed terminals (normal exits rm the file below).
+  # leftovers from crashed terminals (normal exits rm the file below); mtime
+  # alone can't tell those from a live week-old session's file, so files still
+  # named by a live tmux session's CLAUDE_EXIT_FILE are spared.
   local exit_dir="$HOME/.local/state/claude-wrapper"
   mkdir -p "$exit_dir" || return 1
-  find "$exit_dir" -name 'claude-exit.*' -type f -mtime +7 -delete 2>/dev/null
+  local _live_exit_files _stale
+  _live_exit_files=$(tmux list-sessions -F '#S' 2>/dev/null | while read -r _s; do
+    tmux show-environment -t "$_s" CLAUDE_EXIT_FILE 2>/dev/null
+  done)
+  find "$exit_dir" -name 'claude-exit.*' -type f -mtime +7 2>/dev/null | while read -r _stale; do
+    case "$_live_exit_files" in *"=$_stale"*) ;; *) rm -f "$_stale" ;; esac
+  done
   local exit_capture
   exit_capture=$(mktemp "$exit_dir/claude-exit.XXXXXX") || return 1
   # `-e` is required (not a plain `VAR=val tmux ...` prefix) because tmux

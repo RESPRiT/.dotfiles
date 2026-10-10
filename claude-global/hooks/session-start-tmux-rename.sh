@@ -2,10 +2,11 @@
 # SessionStart: rename the wrapping tmux session to claude-<sid8> so the
 # Claude session id shows up in tmux's session list and choose-tree picker.
 #
-# Only fires when the shellrc claude() wrapper launched tmux (signaled by
+# Only renames when the shellrc claude() wrapper launched tmux (signaled by
 # CLAUDE_EXIT_FILE being set on the tmux session env). When the user runs
-# claude inside their own tmux session, CLAUDE_EXIT_FILE is unset and we
-# no-op so manually-named sessions are left alone.
+# claude inside their own tmux session, CLAUDE_EXIT_FILE is unset and the
+# session name is left alone; the id is only stamped on the pane as
+# @claude-session-id (for claude-sessions).
 #
 # Leader ownership: CLAUDE_EXIT_FILE lives in the tmux *session* env, so it is
 # inherited by *every* claude process spawned anywhere in the session --
@@ -25,7 +26,6 @@
 # ownership on its next SessionStart. The var is session-scoped: it survives
 # /clear & /compact and dies with the session (destroy-unattached on).
 
-[ -n "$CLAUDE_EXIT_FILE" ] || exit 0
 [ -n "$TMUX" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
 
@@ -45,6 +45,21 @@ while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
   esac
   pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
 done
+
+# Stamp the id on the pane for claude-sessions, which finds claudes running in
+# the user's own tmux sessions by pane. Only the pane's interactive claude (the
+# pane root, or a direct child of the pane's shell) may stamp it, so a nested
+# `claude -p` run from a tool can't overwrite it with an ephemeral id.
+if [ -n "$TMUX_PANE" ] && [ -n "$firing_claude" ]; then
+  pane_pid=$(tmux display -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null)
+  if [ "$firing_claude" = "$pane_pid" ] ||
+     [ "$(ps -o ppid= -p "$firing_claude" 2>/dev/null | tr -d ' ')" = "$pane_pid" ]; then
+    tmux set -p -t "$TMUX_PANE" @claude-session-id "$sid" 2>/dev/null
+  fi
+fi
+
+# The rest renames wrapper sessions only (see above).
+[ -n "$CLAUDE_EXIT_FILE" ] || exit 0
 
 # Read the lock and treat it as held only while its pid is still a live claude.
 # A dead pid (leader exited) or one recycled by another program yields no

@@ -332,7 +332,9 @@ claude() {
     tmux set -p @claude-running 1 2>/dev/null
     command claude "$@"
     local rc=$?
-    tmux set -pu @claude-running 2>/dev/null
+    # @claude-session-id is stamped by the SessionStart rename hook for
+    # claude-sessions; clear it so the idle shell isn't mistaken for that session.
+    tmux set -pu @claude-running \; set -pu @claude-session-id 2>/dev/null
     return $rc
   fi
 

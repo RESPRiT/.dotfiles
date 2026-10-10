@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
-"""Snapshot, shut down, and restore every wrapped Claude Code session.
+"""Snapshot, shut down, and restore every Claude Code session running in tmux.
 
   claude-sessions save      snapshot sessions (no shutdown)
   claude-sessions down      snapshot, then /exit every session
   claude-sessions restore   resume every snapshotted session, re-enter
                             worktrees, refill drafts, reopen Ghostty tabs
-  claude-sessions attach X  attach a restored session (what each tab runs)
+  claude-sessions attach X  attach a restored wrapper session (what each tab runs)
   claude-sessions status    print the snapshot
 
-Sessions are the tmux sessions named claude-<sid8> by the shellrc claude()
-wrapper. Run `down` and `restore` from a plain Ghostty tab, not inside tmux.
+Two kinds of session are handled, each recorded with its `mode`:
+
+  wrapper  a tmux session of its own, named claude-<sid8> by the shellrc
+           claude() wrapper; restored as a new session plus (macOS) a Ghostty tab.
+  pane     a claude running in a pane of the user's own tmux session; restored
+           as a window in that session, in saved order. A session tmux numbered
+           itself ("0", "1", ...) is treated as unnamed: restore puts its windows
+           into the current tmux session, or a new one when run outside tmux.
+           --into SESSION overrides the target for every pane entry.
+
+Run `down` from a pane or tab that isn't one of the sessions it exits.
 """
 
 import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,7 +38,16 @@ STATE_DIR = Path.home() / ".local/state/claude-sessions"
 SNAPSHOT = STATE_DIR / "snapshot.json"
 EXIT_DIR = Path.home() / ".local/state/claude-wrapper"
 PROJECTS = Path.home() / ".claude/projects"
+# Claude Code's per-process registry: <pid>.json holds that process's current sessionId.
+LIVE_SESSIONS = Path.home() / ".claude/sessions"
 SESSION_RE = re.compile(r"^claude-[0-9a-f]{8}$")
+SHELLS = {"zsh", "bash", "sh", "dash", "fish"}
+PANE_FMT = "\t".join(
+    [
+        "#{session_name}", "#{window_index}", "#{window_name}", "#{automatic-rename}", "#{pane_index}",
+        "#{pane_id}", "#{pane_pid}", "#{pane_width}", "#{pane_height}", "#{pane_title}", "#{@claude-session-id}",
+    ]
+)
 # Spinner line while a turn is running, e.g. "✽ Coalescing… (2m 33s · ↓ 13.8k tokens"
 BUSY_RE = re.compile(r"…\s*\((\d+[hms]\s*)+")
 ANSI_RE = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07]*\x07")
@@ -72,6 +91,56 @@ def proc_comm(pid):
 
 def is_claude_pid(pid):
     return "claude" in proc_comm(pid)
+
+
+def proc_table():
+    """pid -> (ppid, comm) for every process."""
+    r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,comm="], capture_output=True, text=True)
+    procs = {}
+    for line in r.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3:
+            procs[int(parts[0])] = (int(parts[1]), parts[2])
+    return procs
+
+
+def claude_in_pane(pane_pid, procs):
+    """The pane's claude: the pane root itself, or a direct child of the pane's shell."""
+    if "claude" in procs.get(pane_pid, (0, ""))[1]:
+        return pane_pid
+    return next((pid for pid, (ppid, comm) in procs.items() if ppid == pane_pid and "claude" in comm), None)
+
+
+def registry_session_id(pid):
+    try:
+        data = json.loads((LIVE_SESSIONS / f"{pid}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return data.get("sessionId") if data.get("pid") == pid else None
+
+
+def live_session_ids():
+    """Session ids of every running claude, from the registry and the hook's pane stamps."""
+    procs = proc_table()
+    ids = set()
+    for f in LIVE_SESSIONS.glob("*.json"):
+        pid = int(f.stem) if f.stem.isdigit() else None
+        if pid in procs and "claude" in procs[pid][1]:
+            ids.add(registry_session_id(pid))
+    panes = tmux("list-panes", "-a", "-F", "#{pane_pid}\t#{@claude-session-id}", check=False)
+    for line in panes.splitlines():
+        pane_pid, _, sid = line.partition("\t")
+        if sid and claude_in_pane(int(pane_pid), procs):
+            ids.add(sid)
+    ids.discard(None)
+    return ids
+
+
+def is_wrapper_session(name):
+    if SESSION_RE.match(name):
+        return True
+    env = tmux("show-environment", "-t", f"={name}", "CLAUDE_EXIT_FILE", check=False)
+    return env.startswith("CLAUDE_EXIT_FILE=")
 
 
 def proc_cwd(pid):
@@ -237,9 +306,33 @@ def tab_for(session, tabs):
     return next((tabs[t] for t in ttys if t in tabs), None)
 
 
+def session_entry(name, pane_id, pid, w, h, transcript, **extra):
+    launch_cwd = transcript_cwd(transcript)
+    live_cwd = proc_cwd(pid)
+    lines = capture(pane_id)
+    return {
+        "name": name,
+        "session_id": transcript.stem,
+        "launch_cwd": launch_cwd,
+        "worktree": live_cwd if live_cwd and live_cwd != launch_cwd else None,
+        "draft": read_draft(lines),
+        "draft_caveat": draft_caveat(lines, w),
+        "at_prompt": prompt_body(lines) is not None,
+        "background_tasks": background_tasks(pid),
+        "busy": is_busy(lines),
+        "title": tmux("display", "-p", "-t", pane_id, "#{pane_title}").strip(),
+        "size": [w, h],
+        **extra,
+        "pane": pane_id,
+        "pid": pid,
+    }
+
+
 def snapshot_sessions():
-    names = [n for n in tmux("list-sessions", "-F", "#S", check=False).split() if SESSION_RE.match(n)]
-    tabs = ghostty_tabs() if names else {}
+    sessions = tmux("list-sessions", "-F", "#S", check=False).splitlines()
+    wrapped = [n for n in sessions if is_wrapper_session(n)]
+    names = [n for n in wrapped if SESSION_RE.match(n)]
+    tabs = ghostty_tabs() if names and sys.platform == "darwin" else {}
     entries, problems = [], []
     for name in names:
         sid8 = name[len("claude-") :]
@@ -252,34 +345,51 @@ def snapshot_sessions():
         if transcript is None:
             problems.append(f"{name}: no transcript matching {sid8}* under {PROJECTS}")
             continue
-        launch_cwd = transcript_cwd(transcript)
-        live_cwd = proc_cwd(pid)
-        lines = capture(pane_id)
-        entries.append(
-            {
-                "name": name,
-                "session_id": transcript.stem,
-                "launch_cwd": launch_cwd,
-                "worktree": live_cwd if live_cwd and live_cwd != launch_cwd else None,
-                "draft": read_draft(lines),
-                "draft_caveat": draft_caveat(lines, w),
-                "at_prompt": prompt_body(lines) is not None,
-                "background_tasks": background_tasks(pid),
-                "busy": is_busy(lines),
-                "title": tmux("display", "-p", "-t", pane_id, "#{pane_title}").strip(),
-                "size": [w, h],
-                "tab": tab_for(name, tabs),
-                "pane": pane_id,
-                "pid": pid,
-            }
-        )
-    entries.sort(key=tab_order)
+        entries.append(session_entry(name, pane_id, pid, w, h, transcript, mode="wrapper", tab=tab_for(name, tabs)))
+    for name in wrapped:
+        if name not in names:
+            problems.append(f"{name}: wrapper session without a claude-<sid8> name (rename hook lost a prefix clash?)")
+
+    procs = proc_table()
+    leaders = {e["pane"] for e in entries}
+    for line in tmux("list-panes", "-a", "-F", PANE_FMT, check=False).splitlines():
+        session, window, window_name, auto_rename, pane_index, pane_id, pane_pid, w, h, _title, stamped = line.split("\t")
+        if session in wrapped:
+            # A second claude in a wrapper session isn't saved, and dies when the leader's session is killed.
+            if session in names and pane_id not in leaders and claude_in_pane(int(pane_pid), procs):
+                problems.append(f"{session}: extra claude in pane {pane_id} isn't saved and dies with the session")
+            continue
+        pid = claude_in_pane(int(pane_pid), procs)
+        if pid is None:
+            continue
+        name = f"{session}:{window}"
+        sid = registry_session_id(pid) or stamped
+        if not sid:
+            problems.append(f"{name}: can't tell which session claude (pid {pid}) is running")
+            continue
+        transcript = transcript_for(sid)
+        if transcript is None:
+            problems.append(f"{name}: no transcript for {sid} under {PROJECTS}")
+            continue
+        loc = {
+            "session": session,
+            "window": int(window),
+            "pane": int(pane_index),
+            # Only a name the user set; an automatic one would freeze if passed to new-window -n.
+            "window_name": window_name if auto_rename == "0" else None,
+        }
+        entries.append(session_entry(name, pane_id, pid, int(w), int(h), transcript, mode="pane", tmux=loc))
+    entries.sort(key=entry_order)
     return entries, problems
 
 
-def tab_order(e):
+def entry_order(e):
+    """Wrapper sessions in Ghostty tab order, then pane sessions in tmux window order."""
+    if e.get("mode") == "pane":
+        loc = e["tmux"]
+        return (1, loc["session"], loc["window"], loc["pane"])
     tab = e.get("tab")
-    return (tab["window"], tab["index"]) if tab else (1 << 30, 0)
+    return (0, "", tab["window"], tab["index"]) if tab else (2, "", 0, 0)
 
 
 def load_snapshot():
@@ -353,7 +463,7 @@ def cmd_save(args, phase="saved"):
         die(f"no live sessions; refusing to overwrite the {len(prev['sessions'])}-session snapshot (--fresh to do it)")
     for e in carried:
         print(f"  carrying forward {e['name']} (not running; --fresh drops it)")
-    saved = sorted(carried + entries, key=tab_order)
+    saved = sorted(carried + entries, key=entry_order)
     write_snapshot(saved, phase)
 
     print(f"Saved {len(saved)} sessions to {SNAPSHOT}")
@@ -420,7 +530,9 @@ def exit_session(e):
     answered_at = None
     while time.time() < deadline:
         if not pid_alive(e["pid"]):
-            tmux("kill-session", "-t", e["name"], check=False)
+            # A pane session's window stays, back at its shell; only a wrapper owns its tmux session.
+            if e["mode"] == "wrapper":
+                tmux("kill-session", "-t", f"={e['name']}", check=False)
             return None
         try:
             options = worktree_dialog(pane)
@@ -474,10 +586,13 @@ def choose_keep(pane, options):
 
 
 def cmd_down(args):
-    if os.environ.get("TMUX"):
-        die("run `down` from a plain Ghostty tab, not inside tmux")
+    here = os.environ.get("TMUX_PANE")
+    here_session = tmux("display", "-p", "-t", here, "#S", check=False).strip() if here else None
     prev_phase = (load_snapshot() or {}).get("phase", "saved")
     entries = cmd_save(args, phase="down-started")
+    if any(e["pane"] == here or (e["mode"] == "wrapper" and e["name"] == here_session) for e in entries):
+        set_phase(prev_phase)
+        die("this pane is one of the sessions `down` would exit; run it from another pane or tab")
     if not args.yes:
         if input(f"\nExit {len(entries)} running sessions? [y/N] ").strip().lower() != "y":
             set_phase(prev_phase)
@@ -489,7 +604,7 @@ def cmd_down(args):
     if failures:
         die(f"{len(failures)} session(s) still need attention; fix them, then rerun `down` (the snapshot keeps the rest)")
     set_phase("down-complete")
-    print("\nAll sessions exited. Restart, open Ghostty, then run: claude-sessions restore")
+    print("\nAll sessions exited. After the restart, run: claude-sessions restore")
 
 
 def ready(pane):
@@ -526,6 +641,71 @@ def launch(e):
     e["pane"], e["pid"] = pane, int(pid)
 
 
+def has_session(name):
+    return subprocess.run(["tmux", "has-session", "-t", f"={name}"], capture_output=True).returncode == 0
+
+
+def idle_shell(target, cwd):
+    """(pane_id, pane_pid) when target is a bare shell sitting in cwd, e.g. a window `down` left behind."""
+    fmt = "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}"
+    parts = tmux("display", "-p", "-t", target, fmt, check=False).strip().split("\t")
+    if len(parts) != 4 or parts[2] not in SHELLS or parts[3] != cwd:
+        return None
+    return parts[0], int(parts[1])
+
+
+def launch_pane(e, target, reusable):
+    """Resume a pane session as a window of tmux session `target` (None: a new unnamed one); returns its session.
+
+    Only panes in `reusable` may be typed into: a window this run just made still looks like an idle shell
+    while its shell starts, and keys typed there would reach the claude it is about to launch.
+    """
+    loc, sid = e["tmux"], e["session_id"]
+    fmt = "#{session_name}\t#{pane_id}\t#{pane_pid}"
+    reuse = idle_shell(f"={target}:{loc['window']}.{loc['pane']}", e["launch_cwd"]) if target == loc["session"] else None
+    if reuse and reuse[0] not in reusable:
+        reuse = None
+    if reuse:
+        reusable.discard(reuse[0])
+        # clear: the old claude's last frame is still on screen and would pass for a ready prompt.
+        pane_id, pane_pid = reuse
+        tmux("send-keys", "-t", pane_id, "C-u")
+        tmux("send-keys", "-t", pane_id, "-l", "--", f"clear && claude --resume {sid}")
+        tmux("send-keys", "-t", pane_id, "Enter")
+        session = target
+    else:
+        # Through an interactive shell so the shellrc claude() wrapper marks the pane, and the
+        # window falls back to a shell when claude exits, like one started by hand.
+        shell = shlex.quote(os.environ.get("SHELL") or "/bin/sh")
+        cmd = f"{shell} -ic {shlex.quote(f'claude --resume {sid}; exec {shell}')}"
+        name = ["-n", loc["window_name"]] if loc.get("window_name") else []
+        if target and has_session(target):
+            out = tmux("new-window", "-d", "-a", "-t", f"={target}:{{end}}", "-P", "-F", fmt, "-c", e["launch_cwd"], *name, cmd)
+        else:
+            w, h = e["size"]
+            new = ["new-session", "-d", *(["-s", target] if target else []), "-x", str(w), "-y", str(h)]
+            out = tmux(*new, "-P", "-F", fmt, "-c", e["launch_cwd"], *name, cmd)
+        session, pane_id, pane_pid = out.strip().split("\t")
+        pane_pid = int(pane_pid)
+    e["pane"], e["pane_pid"], e["pid"] = pane_id, pane_pid, None
+    return session
+
+
+def pane_target(saved, into):
+    """Session a pane entry restores into; None means a new session tmux names itself."""
+    if into:
+        return into
+    if not saved.isdigit():
+        return saved
+    # tmux numbered it, so the name carries no intent: use the session restore runs in, if any,
+    # unless that's a wrapper session (its extra windows would be invisible to save and die with it).
+    here = os.environ.get("TMUX_PANE")
+    if not here:
+        return None
+    current = tmux("display", "-p", "-t", here, "#S", check=False).strip()
+    return current if current and not is_wrapper_session(current) else None
+
+
 def paste(pane, text):
     """Bracketed paste via a buffer: no tmux argv parsing of leading '-' or trailing ';'."""
     # Per-pane buffer: restores run in parallel threads and a shared one gets swapped between load and paste.
@@ -559,7 +739,7 @@ def open_tabs(entries):
     self_path = os.path.realpath(sys.argv[0])
     lines = [f"tell application {applescript_str(GHOSTTY_APP)}", "  activate"]
     window = None
-    for i, e in enumerate(sorted(entries, key=tab_order)):
+    for i, e in enumerate(sorted(entries, key=entry_order)):
         tab = e.get("tab") or {}
         # Read the name live: the SessionStart hook may rename the session after restore_session gave up on it.
         name = tmux("display", "-p", "-t", e["pane"], "#S", check=False).strip() or e["name"]
@@ -579,10 +759,17 @@ def open_tabs(entries):
 def restore_session(e):
     """Wait for the prompt, send the resume notice (worktree, killed tasks), retype the draft."""
     pane = e["pane"]
+    if e["mode"] == "pane":
+        # The pane starts as a shell; wait for its claude before trusting what the screen shows.
+        if not wait_until(lambda: e.update(pid=claude_in_pane(e["pane_pid"], proc_table())) or e["pid"], 30):
+            return "claude never started in its pane; skipped its worktree/draft"
     if not wait_until(lambda: ready(pane), 90):
         return "never reached an idle ❯ prompt; skipped its worktree/draft"
-    # The SessionStart hook renames the session if --resume ever lands on a new id.
-    e["name"] = tmux("display", "-p", "-t", pane, "#S").strip()
+    if e["mode"] == "pane":
+        e["name"] = tmux("display", "-p", "-t", pane, "#{session_name}:#{window_index}").strip()
+    else:
+        # The SessionStart hook renames the session if --resume ever lands on a new id.
+        e["name"] = tmux("display", "-p", "-t", pane, "#S").strip()
     worktree = e.get("worktree") if e.get("worktree") and proc_cwd(e["pid"]) != e["worktree"] else None
     tasks = e.get("background_tasks") or []
     if worktree or tasks:
@@ -610,16 +797,18 @@ def restore_session(e):
 
 
 def cmd_restore(args):
-    if os.environ.get("TMUX"):
-        die("run `restore` from a plain Ghostty tab, not inside tmux")
     data = load_snapshot()
     if data is None:
         die(f"no snapshot at {SNAPSHOT}")
-    live = set(tmux("list-sessions", "-F", "#S", check=False).split())
+    if args.into and is_wrapper_session(args.into):
+        die(f"--into {args.into} is a claude() wrapper session; pick a session of your own")
+    live_names = set(tmux("list-sessions", "-F", "#S", check=False).splitlines())
+    live_ids = live_session_ids()
 
     todo = []
     for e in data["sessions"]:
-        if e["name"] in live:
+        e.setdefault("mode", "wrapper")  # snapshots from before pane mode
+        if e["session_id"] in live_ids or (e["mode"] == "wrapper" and e["name"] in live_names):
             warn(f"{e['name']} is already running; skipping")
         elif not e["launch_cwd"] or not Path(e["launch_cwd"]).is_dir():
             warn(f"{e['name']}: launch dir {e['launch_cwd']} is missing; skipping")
@@ -630,10 +819,22 @@ def cmd_restore(args):
             todo.append(e)
 
     started = []
-    for e in todo:
-        print(f"resuming {e['name']} in {e['launch_cwd']}")
+    # Unnamed saved sessions that went into a new session share it: saved name -> created name.
+    created = {}
+    reusable = set(tmux("list-panes", "-a", "-F", "#{pane_id}", check=False).split())
+    for e in sorted(todo, key=entry_order):
         try:
-            launch(e)
+            if e["mode"] == "pane":
+                saved = e["tmux"]["session"]
+                target = pane_target(saved, args.into)
+                target = created.get(saved, target) if target is None else target
+                print(f"resuming {e['name']} in {e['launch_cwd']} (into {target or 'a new session'})")
+                session = launch_pane(e, target, reusable)
+                if target is None:
+                    created[saved] = session
+            else:
+                print(f"resuming {e['name']} in {e['launch_cwd']}")
+                launch(e)
             started.append(e)
         except RuntimeError as ex:
             warn(f"{e['name']}: {ex}")
@@ -643,21 +844,40 @@ def cmd_restore(args):
     if started:
         set_phase("restored")
 
-    if args.no_tabs or not started:
-        print("\nAttach with: claude-sessions attach <name>")
-        for e in started:
+    wrapped = [e for e in started if e["mode"] == "wrapper"]
+    panes = [e for e in started if e["mode"] == "pane"]
+    tabs_opened = False
+    if wrapped and not args.no_tabs and sys.platform != "darwin":
+        print("\nGhostty tabs are only reopened on macOS.")
+    if wrapped and not args.no_tabs and sys.platform == "darwin":
+        try:
+            open_tabs(wrapped)
+            tabs_opened = True
+            print(f"\nOpened {len(wrapped)} Ghostty tabs.")
+        except RuntimeError as ex:
+            warn(f"could not open Ghostty tabs ({ex})")
+    if wrapped and not tabs_opened:
+        print("\nAttach each with: claude-sessions attach <name>")
+        for e in wrapped:
             print(f"  {e['name']}  {e['title']}")
+    if not panes:
+        if tabs_opened:
+            print("This tab can be closed.")
         return
 
-    try:
-        open_tabs(started)
-    except RuntimeError as ex:
-        warn(f"could not open Ghostty tabs ({ex})")
-        print("Attach each with: claude-sessions attach <name>")
-        for e in started:
-            print(f"  {e['name']}  {e['title']}")
+    print("\nRestored as tmux windows:")
+    for e in panes:
+        print(f"  {e['name']}  {e['title']}")
+    first = panes[0]["pane"]
+    session = tmux("display", "-p", "-t", first, "#S").strip()
+    if args.no_attach:
+        print(f"Attach with: tmux attach -t {shlex.quote(session)}")
         return
-    print(f"\nOpened {len(started)} tabs; this tab can be closed.")
+    tmux("select-window", "-t", first)
+    if os.environ.get("TMUX"):
+        tmux("switch-client", "-t", f"={session}")
+    else:
+        os.execvp("tmux", ["tmux", "attach-session", "-t", f"={session}"])
 
 
 def cmd_attach(args):
@@ -693,6 +913,8 @@ def main():
             s.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     r = sub.add_parser("restore")
     r.add_argument("--no-tabs", action="store_true", help="resume sessions but don't open Ghostty tabs")
+    r.add_argument("--no-attach", action="store_true", help="don't attach/switch to the restored tmux windows")
+    r.add_argument("--into", metavar="SESSION", help="restore every pane session into this tmux session")
     a = sub.add_parser("attach")
     a.add_argument("name")
     sub.add_parser("status")

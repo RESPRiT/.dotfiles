@@ -41,6 +41,8 @@ PROJECTS = Path.home() / ".claude/projects"
 # Claude Code's per-process registry: <pid>.json holds that process's current sessionId.
 LIVE_SESSIONS = Path.home() / ".claude/sessions"
 SESSION_RE = re.compile(r"^claude-[0-9a-f]{8}$")
+# Claude Code's EnterWorktree layout: <repo>/.claude/worktrees/<name>[/subdir].
+WORKTREE_RE = re.compile(r"^(.*/\.claude/worktrees/[^/]+)(?:/|$)")
 SHELLS = {"zsh", "bash", "sh", "dash", "fish"}
 PANE_FMT = "\t".join(
     [
@@ -306,15 +308,22 @@ def tab_for(session, tabs):
     return next((tabs[t] for t in ttys if t in tabs), None)
 
 
+def worktree_of(path):
+    """Root of the Claude worktree path is in, or None; a plain cd elsewhere isn't a worktree."""
+    m = WORKTREE_RE.match(path or "")
+    return m.group(1) if m else None
+
+
 def session_entry(name, pane_id, pid, w, h, transcript, **extra):
     launch_cwd = transcript_cwd(transcript)
-    live_cwd = proc_cwd(pid)
+    worktree = worktree_of(proc_cwd(pid))
     lines = capture(pane_id)
     return {
         "name": name,
         "session_id": transcript.stem,
         "launch_cwd": launch_cwd,
-        "worktree": live_cwd if live_cwd and live_cwd != launch_cwd else None,
+        # A session launched inside its worktree resumes there anyway.
+        "worktree": worktree if worktree != worktree_of(launch_cwd) else None,
         "draft": read_draft(lines),
         "draft_caveat": draft_caveat(lines, w),
         "at_prompt": prompt_body(lines) is not None,
@@ -770,7 +779,7 @@ def restore_session(e):
     else:
         # The SessionStart hook renames the session if --resume ever lands on a new id.
         e["name"] = tmux("display", "-p", "-t", pane, "#S").strip()
-    worktree = e.get("worktree") if e.get("worktree") and proc_cwd(e["pid"]) != e["worktree"] else None
+    worktree = e.get("worktree") if e.get("worktree") and worktree_of(proc_cwd(e["pid"])) != e["worktree"] else None
     tasks = e.get("background_tasks") or []
     if worktree or tasks:
         if not input_empty(pane):
@@ -787,7 +796,7 @@ def restore_session(e):
             return "resume notice was not submitted; skipped its draft"
         if not wait_until(lambda: ready(pane), 180):
             return "resume-notice turn still running; skipped its draft"
-        if worktree and proc_cwd(e["pid"]) != worktree:
+        if worktree and worktree_of(proc_cwd(e["pid"])) != worktree:
             warn(f"{e['name']}: cwd is {proc_cwd(e['pid'])}, expected {worktree}")
     if e.get("draft"):
         if not input_empty(pane):
